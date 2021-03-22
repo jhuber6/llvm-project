@@ -1534,6 +1534,13 @@ private:
   /// Kernel (=GPU) optimizations and utility functions
   ///
   ///{{
+  enum class AddressSpace : unsigned {
+    Generic = 0,
+    Global = 1,
+    Shared = 3,
+    Constant = 4,
+    Local = 5,
+  };
 
   /// Check if \p F is a kernel, hence entry point for target offloading.
   bool isKernel(Function &F) { return OMPInfoCache.Kernels.count(&F); }
