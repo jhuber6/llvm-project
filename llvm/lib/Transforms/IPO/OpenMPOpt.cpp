@@ -23,6 +23,9 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Frontend/OpenMP/OMPConstants.h"
 #include "llvm/Frontend/OpenMP/OMPIRBuilder.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/IPO.h"
@@ -30,9 +33,8 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/CallGraphUpdater.h"
 #include "llvm/Transforms/Utils/CodeExtractor.h"
-#include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 
+using namespace llvm::PatternMatch;
 using namespace llvm;
 using namespace omp;
 
@@ -74,6 +76,8 @@ STATISTIC(
     "Number of OpenMP parallel regions replaced with ID in GPU state machines");
 STATISTIC(NumOpenMPParallelRegionsMerged,
           "Number of OpenMP parallel regions merged");
+STATISTIC(NumBytesMovedToSharedMemory,
+          "Amount of memory pushed to shared memory");
 
 #if !defined(NDEBUG)
 static constexpr auto TAG = "[" DEBUG_TYPE "]";
@@ -541,6 +545,7 @@ struct OpenMPOpt {
     if (IsModulePass) {
       Changed |= runAttributor();
 
+      Changed |= replaceGlobalization();
       if (remarksEnabled())
         analysisGlobalization();
     } else {
@@ -1018,6 +1023,82 @@ private:
       OMPInfoCache.recollectUsesForFunction(OMPRTL___kmpc_end_master);
     }
 
+    return Changed;
+  }
+
+  /// Replace globalization calls in the device with shared memory.
+  bool replaceGlobalization() {
+    auto &RFI = OMPInfoCache.RFIs[OMPRTL___kmpc_alloc_shared];
+    bool Changed = false;
+
+    auto ReplaceAllocCalls = [&](Use &U, Function &F) {
+      auto &FreeCall = OMPInfoCache.RFIs[OMPRTL___kmpc_free_shared];
+      CallBase *CB = OpenMPOpt::getCallIfRegularCall(U, &RFI);
+      if (!CB)
+        return false;
+
+      auto *ED = A.lookupAAFor<AAExecutionDomain>(IRPosition::function(F));
+      if (!ED || !ED->isSingleThreadExecution(*CB))
+        return false;
+
+      ConstantInt *AllocSize = dyn_cast<ConstantInt>(CB->getArgOperand(0));
+      if (!AllocSize)
+        return false;
+
+      LLVM_DEBUG(dbgs() << TAG << "Replace globalization call in "
+                        << CB->getCaller()->getName() << " with "
+                        << AllocSize->getZExtValue()
+                        << " bytes of shared memory\n");
+
+      // Remove the free call
+      for (auto *U : CB->users()) {
+        CallBase *FC = dyn_cast<CallBase>(U);
+        if (FC && FC->getCalledFunction() == FreeCall.Declaration) {
+          FC->eraseFromParent();
+          break;
+        }
+      }
+
+      // Create a new shared memory buffer of the same size as the allocation
+      // and replace all the uses of the original allocation with it.
+      Type *Int8Ty = Type::getInt8Ty(M.getContext());
+      Type *Int8ArrTy = ArrayType::get(Int8Ty, AllocSize->getZExtValue());
+      auto *SharedMem = new GlobalVariable(
+          M, Int8ArrTy, /* IsConstant */ false, GlobalValue::InternalLinkage,
+          UndefValue::get(Int8ArrTy), CB->getName(), nullptr,
+          GlobalValue::NotThreadLocal,
+          static_cast<unsigned>(AddressSpace::Shared));
+
+      auto *NullInt = Constant::getNullValue(Type::getInt64Ty(M.getContext()));
+      auto *GEPExpr = ConstantExpr::getGetElementPtr(
+          Int8ArrTy, SharedMem, SmallVector<Constant *>({NullInt, NullInt}));
+
+      auto *NewBuffer = new AddrSpaceCastInst(GEPExpr, Int8Ty->getPointerTo(),
+                                              CB->getName() + "_shared", CB);
+
+      SharedMem->setAlignment(MaybeAlign(8));
+      NewBuffer->setDebugLoc(CB->getDebugLoc());
+      CB->replaceAllUsesWith(NewBuffer);
+      CB->eraseFromParent();
+
+      auto Remark = [&](OptimizationRemark OR) {
+        return OR << "Replaced globalized variable with "
+                  << ore::NV("SharedMemory", AllocSize->getZExtValue())
+                  << ((AllocSize->getZExtValue() != 1) ? " bytes " : " byte ")
+                  << "of shared memory";
+      };
+      emitRemark<OptimizationRemark>(NewBuffer, "OpenMPReplaceGlobalization",
+                                     Remark);
+
+      NumBytesMovedToSharedMemory += AllocSize->getZExtValue();
+      Changed = true;
+
+      return true;
+    };
+    RFI.foreachUse(SCC, ReplaceAllocCalls);
+
+    if (Changed)
+      OMPInfoCache.recollectUsesForFunction(OMPRTL___kmpc_free_shared);
     return Changed;
   }
 
@@ -1523,9 +1604,28 @@ private:
   /// Kernel (=GPU) optimizations and utility functions
   ///
   ///{{
+  enum class AddressSpace : unsigned {
+    Generic = 0,
+    Global = 1,
+    Shared = 3,
+    Constant = 4,
+    Local = 5,
+  };
 
   /// Check if \p F is a kernel, hence entry point for target offloading.
   bool isKernel(Function &F) { return OMPInfoCache.Kernels.count(&F); }
+
+  /// Check if \p F is an SPMD kernel
+  bool isSPMDMode(Function &F) {
+    if (!OMPInfoCache.Kernels.count(&F))
+      return false;
+
+    auto *GVal = M.getNamedValue(F.getName().str() + "_exec_mode");
+    if (auto *GVar = dyn_cast<GlobalVariable>(GVal))
+      return GVar->getInitializer()->isOneValue();
+
+    return false;
+  }
 
   /// Cache to remember the unique kernel for a function.
   DenseMap<Function *, Optional<Kernel>> UniqueKernelMap;
@@ -2361,6 +2461,23 @@ ChangeStatus AAExecutionDomainFunction::updateImpl(Attributor &A) {
     auto *Cmp = dyn_cast<CmpInst>(Edge->getCondition());
     if (!Cmp || !Cmp->isTrueWhenEqual() || !Cmp->isEquality())
       return false;
+
+    // Temporarily match the pattern generated by clang for teams regions.
+    // TODO: Remove this once the new runtime is in place.
+    ConstantInt *One, *NegOne;
+    CmpInst::Predicate Pred;
+    if (match(
+            Cmp,
+            m_Cmp(
+                Pred, m_Intrinsic<Intrinsic::nvvm_read_ptx_sreg_tid_x>(),
+                m_And(m_Sub(m_Intrinsic<Intrinsic::nvvm_read_ptx_sreg_ntid_x>(),
+                            m_ConstantInt(One)),
+                      m_Xor(m_Sub(m_Intrinsic<
+                                      Intrinsic::nvvm_read_ptx_sreg_warpsize>(),
+                                  m_ConstantInt(One)),
+                            m_ConstantInt(NegOne))))))
+      if (One->isOne() && NegOne->isMinusOne())
+        return true;
 
     ConstantInt *C = dyn_cast<ConstantInt>(Cmp->getOperand(1));
     if (!C || !C->isZero())
