@@ -1183,7 +1183,6 @@ private:
 
       return false;
     };
-
     RFI.foreachUse(SCC, CheckGlobalization);
   }
 

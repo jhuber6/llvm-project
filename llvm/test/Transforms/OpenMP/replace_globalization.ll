@@ -2,8 +2,11 @@
 target datalayout = "e-i64:64-i128:128-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64"
 
+<<<<<<< HEAD
 @S = external local_unnamed_addr global i8*
 
+=======
+>>>>>>> bc70f706496b... [OpenMP] Replace GPU globalization calls with shared memory in the middle-end
 ; CHECK: [[SHARED_X:@.+]] = internal addrspace(3) global [16 x i8] undef
 ; CHECK: [[SHARED_Y:@.+]] = internal addrspace(3) global [4 x i8] undef
 
@@ -69,7 +72,11 @@ exit:
 define void @use(i8* %x) {
 entry:
   %addr = alloca i8*
+<<<<<<< HEAD
   store i8* %x, i8** @S
+=======
+  store i8* %x, i8** %addr
+>>>>>>> bc70f706496b... [OpenMP] Replace GPU globalization calls with shared memory in the middle-end
   ret void
 }
 
