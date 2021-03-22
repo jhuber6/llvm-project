@@ -3882,6 +3882,7 @@ void CGOpenMPRuntimeGPU::emitFunctionProlog(CodeGenFunction &CGF,
   }
   if (!Body)
     return;
+
   CheckVarsEscapingDeclContext VarChecker(CGF, TeamAndReductions.second);
   VarChecker.Visit(Body);
   const RecordDecl *GlobalizedVarsRecord =

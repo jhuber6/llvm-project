@@ -439,6 +439,7 @@ private:
 
   /// The data for the single globalized variable.
   struct MappedVarData {
+    MappedVarData() = default;
     /// Corresponding field in the global record.
     llvm::Value *GlobalizedVal = nullptr;
     /// Corresponding address.
