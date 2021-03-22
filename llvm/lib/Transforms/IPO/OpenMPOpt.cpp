@@ -1170,7 +1170,6 @@ private:
 
   void analysisGlobalization() {
     auto &RFI = OMPInfoCache.RFIs[OMPRTL___kmpc_alloc_shared];
-
     auto CheckGlobalization = [&](Use &U, Function &Decl) {
       if (CallInst *CI = getCallIfRegularCall(U, &RFI)) {
         auto Remark = [&](OptimizationRemarkAnalysis ORA) {
