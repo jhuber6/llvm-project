@@ -23,7 +23,7 @@ entry:
   ret void
 }
 
-define weak i8* @__kmpc_alloc_shared(i64 %DataSize) {
+define internal i8* @__kmpc_alloc_shared(i64 %DataSize) {
 entry:
   %call = call i8* @_Z10SafeMallocmPKc(i64 %DataSize, i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str, i64 0, i64 0)) #11
   ret i8* %call
