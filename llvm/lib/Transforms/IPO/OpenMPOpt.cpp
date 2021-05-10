@@ -419,6 +419,8 @@ struct OMPInformationCache : public InformationCache {
     // TODO: We should attach the attributes defined in OMPKinds.def.
   }
 
+  SmallPtrSetImpl<Kernel> &getKernels() { return Kernels; }
+
   /// Collection of known kernels (\see Kernel) in the module.
   SmallPtrSetImpl<Kernel> &Kernels;
 };
@@ -538,6 +540,8 @@ struct OpenMPOpt {
 
     if (IsModulePass) {
       Changed |= runAttributor();
+
+      OMPInfoCache.recollectUses();
 
       if (remarksEnabled())
         analysisGlobalization();
@@ -1149,28 +1153,23 @@ private:
   }
 
   void analysisGlobalization() {
-    RuntimeFunction GlobalizationRuntimeIDs[] = {OMPRTL___kmpc_alloc_shared,
-                                                 OMPRTL___kmpc_free_shared};
+    auto &RFI = OMPInfoCache.RFIs[OMPRTL___kmpc_alloc_shared];
 
-    for (const auto GlobalizationCallID : GlobalizationRuntimeIDs) {
-      auto &RFI = OMPInfoCache.RFIs[GlobalizationCallID];
+    auto CheckGlobalization = [&](Use &U, Function &Decl) {
+      if (CallInst *CI = getCallIfRegularCall(U, &RFI)) {
+        auto Remark = [&](OptimizationRemarkAnalysis ORA) {
+          return ORA
+                 << "Found thread data sharing on the GPU. "
+                 << "Expect degraded performance due to data globalization.";
+        };
+        emitRemark<OptimizationRemarkAnalysis>(CI, "OpenMPGlobalization",
+                                               Remark);
+      }
 
-      auto CheckGlobalization = [&](Use &U, Function &Decl) {
-        if (CallInst *CI = getCallIfRegularCall(U, &RFI)) {
-          auto Remark = [&](OptimizationRemarkAnalysis ORA) {
-            return ORA
-                   << "Found thread data sharing on the GPU. "
-                   << "Expect degraded performance due to data globalization.";
-          };
-          emitRemark<OptimizationRemarkAnalysis>(CI, "OpenMPGlobalization",
-                                                 Remark);
-        }
+      return false;
+    };
 
-        return false;
-      };
-
-      RFI.foreachUse(SCC, CheckGlobalization);
-    }
+    RFI.foreachUse(SCC, CheckGlobalization);
   }
 
   /// Maps the values stored in the offload arrays passed as arguments to
@@ -1639,9 +1638,13 @@ private:
       GetterRFI.foreachUse(SCC, CreateAA);
     }
 
+    // Create an ExecutionDomain AA for every function and a HeapToStack AA for
+    // every function if there is a device kernel.
     for (auto &F : M) {
       if (!F.isDeclaration())
         A.getOrCreateAAFor<AAExecutionDomain>(IRPosition::function(F));
+      if (!OMPInfoCache.getKernels().empty())
+        A.getOrCreateAAFor<AAHeapToStack>(IRPosition::function(F));
     }
   }
 };
