@@ -436,6 +436,8 @@ struct OMPInformationCache : public InformationCache {
     // TODO: We should attach the attributes defined in OMPKinds.def.
   }
 
+  SmallPtrSetImpl<Kernel> &getKernels() { return Kernels; }
+
   /// Collection of known kernels (\see Kernel) in the module.
   SmallPtrSetImpl<Kernel> &Kernels;
 };
@@ -1651,9 +1653,13 @@ private:
     };
     GlobalizationRFI.foreachUse(SCC, CreateAA);
 
+    // Create an ExecutionDomain AA for every function and a HeapToStack AA for
+    // every function if there is a device kernel.
     for (auto &F : M) {
       if (!F.isDeclaration())
         A.getOrCreateAAFor<AAExecutionDomain>(IRPosition::function(F));
+      if (!OMPInfoCache.getKernels().empty())
+        A.getOrCreateAAFor<AAHeapToStack>(IRPosition::function(F));
     }
   }
 };
