@@ -1,9 +1,12 @@
 ; RUN: opt -S -passes='openmp-opt' < %s | FileCheck %s
+; RUN: opt -passes=openmp-opt -pass-remarks=openmp-opt -disable-output < %s 2>&1 | FileCheck %s -check-prefix=CHECK-REMARKS
 target datalayout = "e-i64:64-i128:128-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64"
 
 @S = external local_unnamed_addr global i8*
 
+; CHECK-REMARKS: remark: replace_globalization.c:5:7: Replaced globalized variable with 16 bytes of shared memory
+; CHECK-REMARKS: remark: replace_globalization.c:5:14: Replaced globalized variable with 4 bytes of shared memory
 ; CHECK: [[SHARED_X:@.+]] = internal addrspace(3) global [16 x i8] undef
 ; CHECK: [[SHARED_Y:@.+]] = internal addrspace(3) global [4 x i8] undef
 

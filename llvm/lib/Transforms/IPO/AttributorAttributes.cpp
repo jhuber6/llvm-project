@@ -5021,12 +5021,12 @@ struct AAHeapToStackImpl : public AAHeapToStack {
   }
 
   bool isAssumedHeapToStack(CallBase &CB) const override {
-    return getAssumed() && MallocCalls.contains(&CB) &&
+    return MallocCalls.contains(&CB) &&
            !BadMallocCalls.count(&CB);
   }
 
   bool isKnownHeapToStack(CallBase &CB) const override {
-    return getKnown() && MallocCalls.contains(&CB) &&
+    return MallocCalls.contains(&CB) &&
            !BadMallocCalls.count(&CB);
   }
 
@@ -5051,6 +5051,11 @@ struct AAHeapToStackImpl : public AAHeapToStack {
 
       LLVM_DEBUG(dbgs() << "H2S: Removing malloc call: " << *MallocCall
                         << "\n");
+
+      auto Remark = [&](OptimizationRemark OR) {
+        return OR << "Moving memory allocation from the heap to the stack.";
+      };
+      A.emitRemark<OptimizationRemark>(MallocCall, "HeapToStack", Remark);
 
       Align Alignment;
       Value *Size;
