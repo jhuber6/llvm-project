@@ -36,6 +36,14 @@ INLINE static void data_sharing_init_stack_common() {
   }
 }
 
+EXTERN void *__kmpc_alloc_shared(size_t DataSize) {
+  return (void *)SafeMalloc(DataSize, "Alloc Shared");
+}
+
+EXTERN void __kmpc_free_shared(void *FrameStart) {
+  SafeFree(FrameStart, "Free Shared");
+}
+
 // Initialize data sharing data structure. This function needs to be called
 // once at the beginning of a data sharing context (coincides with the kernel
 // initialization). This function is called only by the MASTER thread of each
