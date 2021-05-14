@@ -36,6 +36,14 @@ INLINE static void data_sharing_init_stack_common() {
   }
 }
 
+EXTERN void *__kmpc_alloc_shared(size_t DataSize) {
+  return (void *)SafeMalloc(DataSize, "Alloc Shared");
+}
+
+EXTERN void __kmpc_free_shared(void *FrameStart) {
+  SafeFree(FrameStart, "Free Shared");
+}
+
 // Initialize data sharing data structure. This function needs to be called
 // once at the beginning of a data sharing context (coincides with the kernel
 // initialization). This function is called only by the MASTER thread of each
@@ -207,24 +215,27 @@ EXTERN void __kmpc_data_sharing_pop_stack(void *FrameStart) {
   }
 }
 
-// Begin a data sharing context. Maintain a list of references to shared
-// variables. This list of references to shared variables will be passed
-// to one or more threads.
-// In L0 data sharing this is called by master thread.
-// In L1 data sharing this is called by active warp master thread.
-EXTERN void __kmpc_begin_sharing_variables(void ***GlobalArgs, size_t nArgs) {
-  omptarget_nvptx_globalArgs.EnsureSize(nArgs);
-  *GlobalArgs = omptarget_nvptx_globalArgs.GetArgs();
+// Create a buffer to share pointers between the worker threads.
+void **SHARED(GlobalArgs);
+void *GlobalArgsStorage[64];
+#pragma omp allocate(GlobalArgsStorage) allocator(omp_pteam_mem_alloc)
+
+// This function will provide a buffer to store pointers that will be shared
+// with the worker threads. If the number of arguments is small we use a
+// statically allocated buffer, otherwise allocate a new buffer.
+EXTERN void __kmpc_begin_sharing_variables(void ***GlobalArgsPtr,
+                                           size_t nArgs) {
+  if (nArgs > 64)
+    *GlobalArgsPtr = GlobalArgs =
+        reinterpret_cast<void **>(__kmpc_alloc_shared(nArgs * sizeof(void *)));
+  else
+    *GlobalArgsPtr = GlobalArgs = &GlobalArgsStorage[0];
 }
 
-// End a data sharing context. There is no need to have a list of refs
-// to shared variables because the context in which those variables were
-// shared has now ended. This should clean-up the list of references only
-// without affecting the actual global storage of the variables.
-// In L0 data sharing this is called by master thread.
-// In L1 data sharing this is called by active warp master thread.
+// This function will free the memory allocated if a larger buffer was needed.
 EXTERN void __kmpc_end_sharing_variables() {
-  omptarget_nvptx_globalArgs.DeInit();
+  if (GlobalArgs != &GlobalArgsStorage[0])
+    __kmpc_free_shared(GlobalArgs);
 }
 
 // This function will return a list of references to global variables. This
@@ -232,8 +243,9 @@ EXTERN void __kmpc_end_sharing_variables() {
 // members of this list will be passed to the outlined parallel function
 // preserving the order.
 // Called by all workers.
-EXTERN void __kmpc_get_shared_variables(void ***GlobalArgs) {
-  *GlobalArgs = omptarget_nvptx_globalArgs.GetArgs();
+
+EXTERN void __kmpc_get_shared_variables(void ***GlobalArgsPtr) {
+  *GlobalArgsPtr = GlobalArgs;
 }
 
 // This function is used to init static memory manager. This manager is used to
