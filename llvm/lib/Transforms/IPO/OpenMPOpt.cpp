@@ -1534,13 +1534,6 @@ private:
   /// Kernel (=GPU) optimizations and utility functions
   ///
   ///{{
-  enum class AddressSpace : unsigned {
-    Generic = 0,
-    Global = 1,
-    Shared = 3,
-    Constant = 4,
-    Local = 5,
-  };
 
   /// Check if \p F is a kernel, hence entry point for target offloading.
   bool isKernel(Function &F) { return OMPInfoCache.Kernels.count(&F); }
@@ -2656,11 +2649,19 @@ PreservedAnalyses OpenMPOptPass::run(Module &M, ModuleAnalysisManager &AM) {
   if (DisableOpenMPOptimizations)
     return PreservedAnalyses::all();
 
-  // Look at every function definition in the Module.
+  // Create internal copies of each function if this is a kernel Module.
+  DenseSet<const Function *> InternalizedFuncs;
+  if (!OMPInModule.getKernels().empty())
+    for (Function &F : M)
+      if (!F.isDeclaration() && !OMPInModule.getKernels().contains(&F))
+        if (Attributor::internalizeFunction(F, /* Force */ true))
+          InternalizedFuncs.insert(&F);
+
+  // Look at every function definition in the Module that wasn't internalized.
   SmallVector<Function *, 16> SCC;
-  for (Function &Fn : M)
-    if (!Fn.isDeclaration())
-      SCC.push_back(&Fn);
+  for (Function &F : M)
+    if (!F.isDeclaration() && !InternalizedFuncs.contains(&F))
+      SCC.push_back(&F);
 
   if (SCC.empty())
     return PreservedAnalyses::all();
@@ -2681,7 +2682,7 @@ PreservedAnalyses OpenMPOptPass::run(Module &M, ModuleAnalysisManager &AM) {
   OMPInformationCache InfoCache(M, AG, Allocator, /*CGSCC*/ Functions,
                                 OMPInModule.getKernels());
 
-  Attributor A(Functions, InfoCache, CGUpdater);
+  Attributor A(Functions, InfoCache, CGUpdater, nullptr, true, false);
 
   OpenMPOpt OMPOpt(SCC, CGUpdater, OREGetter, InfoCache, A);
   bool Changed = OMPOpt.run(true);
