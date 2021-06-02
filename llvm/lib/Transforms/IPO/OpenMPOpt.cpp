@@ -2568,7 +2568,7 @@ struct AAHeapToSharedFunction : public AAHeapToShared {
       if (CallBase *CB = dyn_cast<CallBase>(U))
         if (!dyn_cast<ConstantInt>(CB->getArgOperand(0)) ||
             !ED.isSingleThreadExecution(*CB))
-          MallocCalls.erase(CB);
+          MallocCalls.remove(CB);
     }
 
     if (NumMallocCalls != MallocCalls.size())
@@ -2578,7 +2578,7 @@ struct AAHeapToSharedFunction : public AAHeapToShared {
   }
 
   /// Collection of all malloc calls in a function.
-  SmallPtrSet<CallBase *, 4> MallocCalls;
+  SetVector<CallBase *> MallocCalls;
 };
 
 } // namespace
