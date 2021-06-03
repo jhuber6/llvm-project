@@ -160,8 +160,9 @@ EXTERN int8_t __kmpc_is_spmd_exec_mode() {
   return isSPMDMode();
 }
 
-EXTERN void __attribute__((used))
-omp_stack_trace_push(uint64_t Index) {}
+EXTERN void __attribute__((used)) omp_stack_trace_push(uint64_t Index) {
+  omptarget_stack_trace_state->Indices[0] = Index;
+}
 
 EXTERN void __attribute__((used)) omp_stack_trace_pop() {}
 

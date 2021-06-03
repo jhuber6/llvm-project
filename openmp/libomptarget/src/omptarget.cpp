@@ -218,6 +218,10 @@ void handleTargetOutcome(bool Success, ident_t *Loc) {
     break;
   case tgt_mandatory:
     if (!Success) {
+      for (auto &R : PM->RTLs.AllRTLs)
+        if (R.get_stack_trace)
+          R.get_stack_trace();
+
       if (getInfoLevel() & OMP_INFOTYPE_DUMP_TABLE)
         for (auto &Device : PM->Devices)
           dumpTargetPointerMappings(Loc, Device);

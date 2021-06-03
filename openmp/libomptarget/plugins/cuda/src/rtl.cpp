@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "Debug.h"
+#include "SourceInfo.h"
 #include "omptargetplugin.h"
 
 #define TARGET_NAME CUDA
@@ -97,6 +98,11 @@ struct KernelTy {
 /// file later.
 struct omptarget_device_environmentTy {
   int32_t debug_level;
+};
+
+/// Fixed-size buffer holding device information for stack traces.
+struct omptarget_stack_trace_stateTy {
+  uint64_t Indices[16];
 };
 
 namespace {
@@ -292,6 +298,8 @@ class DeviceRTLTy {
   std::unique_ptr<StreamManagerTy> StreamManager;
   std::vector<DeviceDataTy> DeviceData;
   std::vector<CUmodule> Modules;
+
+  std::vector<std::pair<char *, omptarget_stack_trace_stateTy *>> StackTraces;
 
   /// A class responsible for interacting with device native runtime library to
   /// allocate and free memory.
@@ -514,6 +522,13 @@ public:
         checkResult(cuDevicePrimaryCtxRelease(Device),
                     "Error returned from cuDevicePrimaryCtxRelease\n");
       }
+    }
+
+    // TODO: Smart pointers maybe?
+    // Deallocate Memory allocaed for stack trace
+    for (auto &StackTrace : StackTraces) {
+      free(StackTrace.first);
+      cuMemFreeHost(StackTrace.second);
     }
   }
 
@@ -841,6 +856,46 @@ public:
       }
     }
 
+    // TODO: Remove this big comment
+    // Try to get stack tracing information from the device if present. This
+    // will check the device image for the precense of two global variables.
+    // The data is constant and simply copied back from the device. The state
+    // will change as the program executes. Here we set up host-mapped memory
+    // to a state variable and send its pointer to the device. This allows the
+    // device to update the state while being readable on the host after the
+    // device crashed.
+    {
+      const char *StackTraceDataID = "__omp_stack_trace_data";
+      const char *StackTraceStateID = "omptarget_stack_trace_state";
+      CUdeviceptr DataPtr;
+      CUdeviceptr StatePtr;
+      size_t DataSize;
+      size_t StateSize;
+
+      CUresult ErrData =
+          cuModuleGetGlobal(&DataPtr, &DataSize, Module, StackTraceDataID);
+      CUresult ErrState =
+          cuModuleGetGlobal(&StatePtr, &StateSize, Module, StackTraceStateID);
+      if (ErrData == CUDA_SUCCESS && ErrState == CUDA_SUCCESS) {
+        CUdeviceptr DevicePtrMapped;
+        omptarget_stack_trace_stateTy *StackTraceState = nullptr;
+        char *StackTraceData = (char *)malloc(DataSize * sizeof(char));
+        CUresult Err = cuMemHostAlloc((void **)&StackTraceState,
+                                      sizeof(omptarget_stack_trace_stateTy),
+                                      CU_MEMHOSTALLOC_DEVICEMAP);
+
+        // TODO: Handle errors better. If once of these fails deallocate, etc.
+        Err = cuMemHostGetDevicePointer(&DevicePtrMapped, StackTraceState, 0x0);
+        Err = cuMemcpyDtoH((void *)StackTraceData, DataPtr, DataSize);
+        Err = cuMemcpyHtoD(StatePtr, &DevicePtrMapped, StateSize);
+
+        // TODO: Could store this data better.
+        auto StackTrace = std::pair<char *, omptarget_stack_trace_stateTy *>(
+            StackTraceData, StackTraceState);
+        StackTraces.push_back(StackTrace);
+      }
+    }
+
     return getOffloadEntriesTable(DeviceId);
   }
 
@@ -1103,6 +1158,19 @@ public:
     }
     return (Err == CUDA_SUCCESS) ? OFFLOAD_SUCCESS : OFFLOAD_FAIL;
   }
+
+  void getStackTrace() {
+    /// Do we want to print here or copy it back to Libomptarget?
+    for (auto &StackTrace : StackTraces) {
+      uint64_t Idx = StackTrace.second->Indices[0];
+      SourceInfo Info((void *)&StackTrace.first[Idx]);
+
+      // TODO: Demangle the function name.
+      fprintf(stderr, "%s ", Info.getName());
+      fprintf(stderr, "%s:%d:%d:\n", Info.getFilename(), Info.getLine(),
+              Info.getColumn());
+    }
+  }
 };
 
 DeviceRTLTy DeviceRTL;
@@ -1302,6 +1370,8 @@ void __tgt_rtl_set_info_flag(uint32_t NewInfoLevel) {
   std::atomic<uint32_t> &InfoLevel = getInfoLevelInternal();
   InfoLevel.store(NewInfoLevel);
 }
+
+void __tgt_rtl_get_stack_trace() { DeviceRTL.getStackTrace(); }
 
 #ifdef __cplusplus
 }

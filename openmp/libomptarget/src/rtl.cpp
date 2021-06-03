@@ -177,6 +177,8 @@ void RTLsTy::LoadRTLs() {
         dlsym(dynlib_handle, "__tgt_rtl_supports_empty_images");
     *((void **)&R.set_info_flag) =
         dlsym(dynlib_handle, "__tgt_rtl_set_info_flag");
+    *((void **)&R.get_stack_trace) =
+        dlsym(dynlib_handle, "__tgt_rtl_get_stack_trace");
   }
 
   DP("RTLs loaded!\n");

@@ -19,6 +19,11 @@ struct omptarget_device_environmentTy {
   int32_t debug_level;
 };
 
+struct omptarget_stack_trace_stateTy {
+  uint64_t Indices[16];
+};
+
 extern omptarget_device_environmentTy omptarget_device_environment;
+extern omptarget_stack_trace_stateTy *omptarget_stack_trace_state;
 
 #endif
