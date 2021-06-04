@@ -20,6 +20,11 @@ struct omptarget_device_environmentTy {
 };
 
 struct omptarget_stack_trace_stateTy {
+  int32_t head;
+  int32_t tail;
+  int32_t capacity;
+  bool is_full;
+  bool is_empty;
   uint64_t Indices[16];
 };
 

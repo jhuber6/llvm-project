@@ -29,6 +29,8 @@
 
 #include "MemoryManager.h"
 
+#include "llvm/Demangle/Demangle.h"
+
 // Utility for retrieving and printing CUDA error string.
 #ifdef OMPTARGET_DEBUG
 #define CUDA_ERR_STRING(err)                                                   \
@@ -102,6 +104,11 @@ struct omptarget_device_environmentTy {
 
 /// Fixed-size buffer holding device information for stack traces.
 struct omptarget_stack_trace_stateTy {
+  int32_t head;
+  int32_t tail;
+  int32_t capacity;
+  bool is_full;
+  bool is_empty;
   uint64_t Indices[16];
 };
 
@@ -886,8 +893,19 @@ public:
 
         // TODO: Handle errors better. If once of these fails deallocate, etc.
         Err = cuMemHostGetDevicePointer(&DevicePtrMapped, StackTraceState, 0x0);
+        // moving function names (data) from D to H
         Err = cuMemcpyDtoH((void *)StackTraceData, DataPtr, DataSize);
         Err = cuMemcpyHtoD(StatePtr, &DevicePtrMapped, StateSize);
+
+        StackTraceState->head = 0;
+        StackTraceState->tail = 0;
+        StackTraceState->capacity = 16; // TODO this is hardcoded for now
+        StackTraceState->is_full = false;
+        StackTraceState->is_empty = true;
+
+        for (int i = 0; i < 16; i++) {
+          StackTraceState->Indices[i] = 0;
+        }
 
         // TODO: Could store this data better.
         auto StackTrace = std::pair<char *, omptarget_stack_trace_stateTy *>(
@@ -1161,14 +1179,36 @@ public:
 
   void getStackTrace() {
     /// Do we want to print here or copy it back to Libomptarget?
+    uint64_t Idx;
     for (auto &StackTrace : StackTraces) {
-      uint64_t Idx = StackTrace.second->Indices[0];
-      SourceInfo Info((void *)&StackTrace.first[Idx]);
+      while (!StackTrace.second->is_empty) {
+        // popping off a value
+        StackTrace.second->head--;
+        if (StackTrace.second->head < 0) {
+          StackTrace.second->head += StackTrace.second->capacity;
+        }
+        Idx = StackTrace.second->Indices[StackTrace.second->head];
+        StackTrace.second->is_full = false;
+        if (StackTrace.second->head == StackTrace.second->tail) {StackTrace.second->is_empty = true;}
+        SourceInfo Info((void *)&StackTrace.first[Idx]);
 
-      // TODO: Demangle the function name.
-      fprintf(stderr, "%s ", Info.getName());
-      fprintf(stderr, "%s:%d:%d:\n", Info.getFilename(), Info.getLine(),
-              Info.getColumn());
+/*
+        // TODO: Demangle the function name.
+        std::string name = Info.getName();
+        if (name.rfind("__omp_offloading_", 0) == 0) {
+          // function name starts with __omp_, pretty up
+          name = name.substrvim 
+
+          rfind("__omp_", 0) == 0) {
+
+          fprintf(stderr, "%s ", llvm::demangle(Info.getName()).c_str());
+          
+*/
+        fprintf(stderr, "%s ", llvm::demangle(Info.getName()).c_str());
+        fprintf(stderr, "%s:%d:%d:\n", Info.getFilename(), Info.getLine(),
+                Info.getColumn());
+      }
+      //uint64_t Idx = StackTrace.second->Indices[0];
     }
   }
 };

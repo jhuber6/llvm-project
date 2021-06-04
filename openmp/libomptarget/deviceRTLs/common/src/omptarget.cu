@@ -161,9 +161,28 @@ EXTERN int8_t __kmpc_is_spmd_exec_mode() {
 }
 
 EXTERN void __attribute__((used)) omp_stack_trace_push(uint64_t Index) {
-  omptarget_stack_trace_state->Indices[0] = Index;
+  omptarget_stack_trace_state->Indices[omptarget_stack_trace_state->head] = Index;
+  omptarget_stack_trace_state->head = (++omptarget_stack_trace_state->head) % omptarget_stack_trace_state->capacity;
+  if (omptarget_stack_trace_state->is_full) {
+    omptarget_stack_trace_state->tail = (++omptarget_stack_trace_state->tail) % omptarget_stack_trace_state->capacity;
+  }
+  else {
+    if (omptarget_stack_trace_state->head == omptarget_stack_trace_state->tail) { 
+      omptarget_stack_trace_state->is_full = true;
+    }
+  }
+  omptarget_stack_trace_state->is_empty = false;
 }
 
-EXTERN void __attribute__((used)) omp_stack_trace_pop() {}
+EXTERN void __attribute__((used)) omp_stack_trace_pop() {
+  if (omptarget_stack_trace_state->head == 0) {
+    omptarget_stack_trace_state->head = omptarget_stack_trace_state->capacity;
+  }
+  omptarget_stack_trace_state->head--;
+  omptarget_stack_trace_state->is_full = false;
+  if (omptarget_stack_trace_state->head == omptarget_stack_trace_state->tail) { 
+    omptarget_stack_trace_state->is_empty = true;
+  }
+}
 
 #pragma omp end declare target

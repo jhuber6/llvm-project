@@ -12,6 +12,8 @@
 
 add_subdirectory(common)
 
+include_directories(${LIBOMPTARGET_LLVM_INCLUDE_DIRS})
+
 # void build_generic_elf64(string tmachine, string tmachine_name, string tmachine_libname, string elf_machine_id);
 # - build a plugin for an ELF based generic 64-bit target based on libffi.
 # - tmachine: name of the machine processor as used in the cmake build system.
@@ -40,14 +42,27 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "${tmachine}$")
       install(TARGETS "omptarget.rtl.${tmachine_libname}"
         LIBRARY DESTINATION "${OPENMP_INSTALL_LIBDIR}")
 
-      target_link_libraries(
-        "omptarget.rtl.${tmachine_libname}"
-        elf_common
-        ${LIBOMPTARGET_DEP_LIBFFI_LIBRARIES}
-        ${LIBOMPTARGET_DEP_LIBELF_LIBRARIES}
-        dl
-        ${OPENMP_PTHREAD_LIB}
-        "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports")
+      if (OPENMP_ENABLE_LIBOMPTARGET_PROFILING)
+        llvm_update_compile_flags(omptarget)
+        target_link_libraries(
+          "omptarget.rtl.${tmachine_libname}"
+          elf_common
+          ${LIBOMPTARGET_DEP_LIBFFI_LIBRARIES}
+          ${LIBOMPTARGET_DEP_LIBELF_LIBRARIES}
+          dl
+          ${OPENMP_PTHREAD_LIB}
+          LLVMDemangle
+          "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports")
+      else()
+        target_link_libraries(
+          "omptarget.rtl.${tmachine_libname}"
+          elf_common
+          ${LIBOMPTARGET_DEP_LIBFFI_LIBRARIES}
+          ${LIBOMPTARGET_DEP_LIBELF_LIBRARIES}
+          dl
+          ${OPENMP_PTHREAD_LIB}
+          "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports")
+        endif()
 
       list(APPEND LIBOMPTARGET_TESTED_PLUGINS
         "omptarget.rtl.${tmachine_libname}")

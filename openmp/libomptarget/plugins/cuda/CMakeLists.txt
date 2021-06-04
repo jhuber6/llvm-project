@@ -53,6 +53,7 @@ target_link_libraries(omptarget.rtl.cuda
   ${LIBOMPTARGET_DEP_LIBRARIES}
   ${LIBOMPTARGET_DEP_LIBELF_LIBRARIES}
   ${OPENMP_PTHREAD_LIB}
+  LLVMDemangle
   "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports"
   "-Wl,-z,defs")
 
