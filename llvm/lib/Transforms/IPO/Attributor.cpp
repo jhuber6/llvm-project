@@ -77,9 +77,9 @@ STATISTIC(NumAttributesManifested,
 // This will become more evolved once we perform two interleaved fixpoint
 // iterations: bottom-up and top-down.
 static cl::opt<unsigned>
-    MaxFixpointIterations("attributor-max-iterations", cl::Hidden,
+    OverrideFixpointIterations("attributor-max-iterations", cl::Hidden,
                           cl::desc("Maximal number of fixpoint iterations."),
-                          cl::init(32));
+                          cl::init(0));
 
 static cl::opt<unsigned, true> MaxInitializationChainLengthX(
     "attributor-max-initialization-chain-length", cl::Hidden,
@@ -1069,6 +1069,8 @@ void Attributor::runTillFixpoint() {
   // the abstract analysis.
 
   unsigned IterationCounter = 1;
+  if (OverrideFixpointIterations)
+    MaxFixpointIterations = OverrideFixpointIterations.getValue();
 
   SmallVector<AbstractAttribute *, 32> ChangedAAs;
   SetVector<AbstractAttribute *> Worklist, InvalidAAs;

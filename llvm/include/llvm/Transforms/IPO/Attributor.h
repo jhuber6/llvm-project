@@ -1090,14 +1090,17 @@ struct Attributor {
   /// \param Allowed If not null, a set limiting the attribute opportunities.
   /// \param DeleteFns Whether to delete functions.
   /// \param RewriteSignatures Whether to rewrite function signatures.
+  /// \param MaxFixedPointIterations Maximum number of iterations to run until
+  ///                                fixpoint.
   Attributor(SetVector<Function *> &Functions, InformationCache &InfoCache,
              CallGraphUpdater &CGUpdater,
              DenseSet<const char *> *Allowed = nullptr, bool DeleteFns = true,
-             bool RewriteSignatures = true)
+             bool RewriteSignatures = true, unsigned MaxFixpointIterations = 32)
       : Allocator(InfoCache.Allocator), Functions(Functions),
         InfoCache(InfoCache), CGUpdater(CGUpdater), Allowed(Allowed),
         DeleteFns(DeleteFns), RewriteSignatures(RewriteSignatures),
-        OREGetter(None), PassName("") {}
+        MaxFixpointIterations(MaxFixpointIterations), OREGetter(None),
+        PassName("")  {}
 
   /// Constructor
   ///
@@ -1107,16 +1110,20 @@ struct Attributor {
   /// \param CGUpdater Helper to update an underlying call graph.
   /// \param Allowed If not null, a set limiting the attribute opportunities.
   /// \param DeleteFns Whether to delete functions
+  /// \param MaxFixedPointIterations Maximum number of iterations to run until
+  ///                                fixpoint.
   /// \param OREGetter A callback function that returns an ORE object from a
   ///                  Function pointer.
   /// \param PassName  The name of the pass emitting remarks.
   Attributor(SetVector<Function *> &Functions, InformationCache &InfoCache,
              CallGraphUpdater &CGUpdater, DenseSet<const char *> *Allowed,
              bool DeleteFns, bool RewriteSignatures,
+             unsigned MaxFixpointIterations,
              OptimizationRemarkGetter OREGetter, const char *PassName)
       : Allocator(InfoCache.Allocator), Functions(Functions),
         InfoCache(InfoCache), CGUpdater(CGUpdater), Allowed(Allowed),
         DeleteFns(DeleteFns), RewriteSignatures(RewriteSignatures),
+        MaxFixpointIterations(MaxFixpointIterations),
         OREGetter(Optional<OptimizationRemarkGetter>(OREGetter)),
         PassName(PassName) {}
 
@@ -1858,6 +1865,9 @@ private:
 
   /// Whether to rewrite signatures.
   const bool RewriteSignatures;
+
+  /// Maximum number of fixedpoint iterations.
+  unsigned MaxFixpointIterations;
 
   /// A set to remember the functions we already assume to be live and visited.
   DenseSet<const Function *> VisitedFunctions;
