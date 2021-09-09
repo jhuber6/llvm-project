@@ -18,6 +18,7 @@ class Twine;
 /// file_magic - An "enum class" enumeration of file types based on magic (the
 /// first N bytes of the file).
 struct file_magic {
+
   enum Impl {
     unknown = 0,       ///< Unrecognized file
     bitcode,           ///< Bitcode file
@@ -41,6 +42,7 @@ struct file_magic {
     macho_kext_bundle,                        ///< Mach-O kext bundle file
     macho_universal_binary,                   ///< Mach-O universal binary
     minidump,                                 ///< Windows minidump file
+    offload_bundle,      ///< Bundled Offload archive
     coff_cl_gl_object,   ///< Microsoft cl.exe's intermediate code file
     coff_object,         ///< COFF object file
     coff_import_library, ///< COFF import library

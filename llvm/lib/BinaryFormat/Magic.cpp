@@ -88,6 +88,10 @@ file_magic llvm::identify_magic(StringRef Magic) {
     if (startswith(Magic, "!<arch>\n") || startswith(Magic, "!<thin>\n"))
       return file_magic::archive;
     break;
+  case '_':
+    if (startswith(Magic, "__CLANG_OFFLOAD_BUNDLE__"))
+      return file_magic::offload_bundle;
+    break;
 
   case '\177':
     if (startswith(Magic, "\177ELF") && Magic.size() >= 18) {
