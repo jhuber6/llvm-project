@@ -1,5 +1,7 @@
+#include "llvm/Offloading/Bundler.h"
 #include "llvm/Offloading/NVPTXToolChain.h"
 
+#include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/FileSystem.h"
@@ -19,8 +21,9 @@ static cl::opt<std::string> InputFileName(cl::Positional, cl::OneOrMore,
                                           cl::cat(ToolChainOptions));
 
 static cl::opt<std::string> OutputFileName("o", cl::CommaSeparated,
-                                           cl::Required,
+                                           cl::Optional,
                                            cl::desc("<output file>"),
+                                           cl::init("out.o"),
                                            cl::cat(ToolChainOptions));
 
 int main(int argc, char **argv) {
@@ -36,6 +39,12 @@ int main(int argc, char **argv) {
     logAllUnhandledErrors(std::move(E), WithColor::error(errs(), argv[0]));
     exit(1);
   };
+
+  ErrorOr<std::unique_ptr<MemoryBuffer>> Buffer =
+      MemoryBuffer::getFile(InputFileName);
+
+  if (std::error_code EC = Buffer.getError())
+    reportError(createFileError(InputFileName, EC));
 
   NVPTX::CudaToolChain TC({"a"}, llvm::Triple("nvptx64-nvidia-cuda"));
   if (auto Err = TC.run(InputFileName.c_str()))

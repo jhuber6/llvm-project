@@ -6,6 +6,7 @@ set(LLVM_LINK_COMPONENTS
   Support
   Instrumentation
   Offloading
+  BinaryFormat
   )
 
 add_llvm_tool(llvm-vendor-toolchain
