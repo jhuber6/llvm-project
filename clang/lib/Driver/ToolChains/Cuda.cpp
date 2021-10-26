@@ -747,7 +747,8 @@ void CudaToolChain::addClangTargetOptions(
     else
       BitcodeSuffix = "nvptx-" + GpuArch.str();
 
-    addOpenMPDeviceRTL(getDriver(), DriverArgs, CC1Args, BitcodeSuffix,
+    if (!DriverArgs.hasFlag(options::OPT_flto_EQ, options::OPT_fno_lto, false))
+      addOpenMPDeviceRTL(getDriver(), DriverArgs, CC1Args, BitcodeSuffix,
                        getTriple());
     AddStaticDeviceLibsPostLinking(getDriver(), DriverArgs, CC1Args, "nvptx", GpuArch,
                         /* bitcode SDL?*/ true, /* PostClang Link? */ true);

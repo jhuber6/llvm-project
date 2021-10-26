@@ -9,6 +9,7 @@ if( LLVM_ENABLE_PIC AND LLVM_BINUTILS_INCDIR )
      LTO
      BitWriter
      Offloading
+     Core
      IPO
      )
 

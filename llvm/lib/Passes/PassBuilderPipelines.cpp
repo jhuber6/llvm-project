@@ -1405,6 +1405,9 @@ PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
   // libraries and other oracles.
   MPM.addPass(InferFunctionAttrsPass());
 
+  if (Level.getSpeedupLevel() > 1)
+    MPM.addPass(OpenMPOptPass());
+
   if (Level.getSpeedupLevel() > 1) {
     FunctionPassManager EarlyFPM;
     EarlyFPM.addPass(CallSiteSplittingPass());
