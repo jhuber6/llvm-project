@@ -1,4 +1,5 @@
 add_llvm_component_library(LLVMOffloading
+  Wrapper.cpp
   Bundler.cpp
   ToolChain.cpp
   NVPTXToolChain.cpp

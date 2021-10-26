@@ -9,10 +9,10 @@ using namespace NVPTX;
 
 static ErrorOr<std::string> getExecutablePath(const char *Executable) {
   SmallString<256> ExecutablePath;
-  if (ErrorOr<std::string> ptxas = sys::findProgramByName(Executable))
-    sys::fs::real_path(*ptxas, ExecutablePath);
+  if (ErrorOr<std::string> Exe = sys::findProgramByName(Executable))
+    sys::fs::real_path(*Exe, ExecutablePath);
   else
-    return ptxas.getError();
+    return Exe.getError();
 
   return static_cast<std::string>(ExecutablePath);
 }
