@@ -2029,3 +2029,25 @@ void tools::addOpenMPDeviceRTL(const Driver &D,
           << LibOmpTargetName << ArchPrefix;
   }
 }
+
+std::string tools::getOpenMPDeviceRTL(const Driver &D,
+                                      const llvm::opt::ArgList &DriverArgs,
+                                      const llvm::Triple &Triple,
+                                      StringRef Arch) {
+
+  llvm::opt::ArgStringList Args;
+
+  SmallString<128> BitcodeSuffix;
+
+  if (DriverArgs.hasFlag(options::OPT_fopenmp_target_new_runtime,
+                         options::OPT_fno_openmp_target_new_runtime, false))
+    BitcodeSuffix += "new-";
+  if (Triple.isNVPTX())
+    BitcodeSuffix += "nvptx-";
+  else if (Triple.isAMDGPU())
+    BitcodeSuffix += "amdgpu-";
+  BitcodeSuffix += Arch;
+
+  addOpenMPDeviceRTL(D, DriverArgs, Args, BitcodeSuffix, Triple);
+  return Args.back();
+}

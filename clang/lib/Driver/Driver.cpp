@@ -3143,6 +3143,8 @@ class OffloadingActionBuilder final {
                          PhasesTy &Phases) override {
       if (OpenMPDeviceActions.empty())
         return ABRT_Inactive;
+      if (CurPhase == phases::Link && C.getDriver().isUsingLTO())
+        return ABRT_Success;
 
       // We should always have an action for each input.
       assert(OpenMPDeviceActions.size() == ToolChains.size() &&
@@ -3417,6 +3419,18 @@ public:
     if (!IsValid)
       return true;
 
+    // Register the offload kinds that are used.
+    auto &OffloadKind = InputArgToOffloadKindMap[InputArg];
+
+    // If this is an object in LTO mode, only set the offload kind information.
+    if (HostAction->getType() == types::TY_Object &&
+        C.getDriver().isUsingLTO()) {
+      for (auto *SB : SpecializedBuilders)
+        if (SB->isValid())
+          OffloadKind |= SB->getAssociatedOffloadKind();
+      return false;
+    }
+
     // If we are supporting bundling/unbundling and the current action is an
     // input action of non-source file, we replace the host action by the
     // unbundling action. The bundler tool has the logic to detect if an input
@@ -3437,8 +3451,6 @@ public:
 
     assert(HostAction && "Invalid host action!");
 
-    // Register the offload kinds that are used.
-    auto &OffloadKind = InputArgToOffloadKindMap[InputArg];
     for (auto *SB : SpecializedBuilders) {
       if (!SB->isValid())
         continue;
@@ -3766,6 +3778,10 @@ void Driver::BuildActions(Compilation &C, DerivedArgList &Args,
       if (Phase == phases::Link) {
         assert(Phase == PL.back() && "linking must be final compilation step.");
         LinkerInputs.push_back(Current);
+        // Bundle the device objects in LTO mode so they can be passed to the
+        // linker.
+        if (isUsingLTO())
+          OffloadBuilder.appendTopLevelActions(LinkerInputs, Current, InputArg);
         Current = nullptr;
         break;
       }
@@ -3825,8 +3841,9 @@ void Driver::BuildActions(Compilation &C, DerivedArgList &Args,
 
   // Add a link action if necessary.
   if (!LinkerInputs.empty()) {
-    if (Action *Wrapper = OffloadBuilder.makeHostLinkAction())
-      LinkerInputs.push_back(Wrapper);
+    if (!isUsingLTO())
+      if (Action *Wrapper = OffloadBuilder.makeHostLinkAction())
+        LinkerInputs.push_back(Wrapper);
     Action *LA;
     // Check if this Linker Job should emit a static library.
     if (ShouldEmitStaticLibrary(Args)) {

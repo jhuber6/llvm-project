@@ -187,6 +187,11 @@ void addMachineOutlinerArgs(const Driver &D, const llvm::opt::ArgList &Args,
 void addOpenMPDeviceRTL(const Driver &D, const llvm::opt::ArgList &DriverArgs,
                         llvm::opt::ArgStringList &CC1Args,
                         StringRef BitcodeSuffix, const llvm::Triple &Triple);
+
+std::string getOpenMPDeviceRTL(const Driver &D,
+                               const llvm::opt::ArgList &DriverArgs,
+                               const llvm::Triple &Triple,
+                               StringRef Arch);
 } // end namespace tools
 } // end namespace driver
 } // end namespace clang

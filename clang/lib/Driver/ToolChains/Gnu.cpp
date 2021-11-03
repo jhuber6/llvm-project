@@ -555,6 +555,65 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     assert(!Inputs.empty() && "Must have at least one input.");
     addLTOOptions(ToolChain, Args, CmdArgs, Output, Inputs[0],
                   D.getLTOMode() == LTOK_Thin);
+    // Add offload bundle information to the linker plugin.
+    // FIXME: This only handles offloading with a single toolchain properly.
+    if (JA.isHostOffloading(Action::OFK_OpenMP)) {
+      SmallVector<const class ToolChain *, 2> ToolChains;
+      auto OpenMPTCRange = C.getOffloadToolChains<Action::OFK_OpenMP>();
+      for (auto TI = OpenMPTCRange.first, TE = OpenMPTCRange.second; TI != TE;
+           ++TI)
+        ToolChains.push_back(TI->second);
+      for (const auto &TC : ToolChains) {
+        const ArgList &TCArgs =
+            C.getArgsForToolChain(TC, "", Action::OFK_OpenMP);
+        const auto GPUArchName = TCArgs.getLastArgValue(options::OPT_march_EQ);
+        const auto BitcodeLib =
+            tools::getOpenMPDeviceRTL(D, Args, TC->getTriple(), GPUArchName);
+        CmdArgs.push_back(
+            TCArgs.MakeArgString("-plugin-opt=device-arch=" + GPUArchName));
+        CmdArgs.push_back(
+            TCArgs.MakeArgString("-plugin-opt=device-bclib=" + BitcodeLib));
+        CmdArgs.push_back(
+            TCArgs.MakeArgString("-plugin-opt=device-triple=" +
+              TC->getTriple().str()));
+        CudaInstallationDetector CudaInstallation(D, *TC->getAuxTriple(),
+                                                  TCArgs);
+
+        SmallString<128> Triples;
+        Triples += "-plugin-opt=bundle-triples=host-";
+        Triples += TC->getAuxTriple()->getTriple();
+        Triples += ",openmp-";
+        Triples += TC->getTriple().getTriple();
+        CmdArgs.push_back(TCArgs.MakeArgString(Triples));
+
+        // New CUDA versions often introduce new instructions that are only
+        // supported by new PTX version, so we need to raise PTX level to enable
+        // them in NVPTX back-end.
+        const char *PtxFeature = nullptr;
+        switch (CudaInstallation.version()) {
+#define CASE_CUDA_VERSION(CUDA_VER, PTX_VER)                                   \
+  case CudaVersion::CUDA_##CUDA_VER:                                           \
+    PtxFeature = "+ptx" #PTX_VER;                                              \
+    break;
+          CASE_CUDA_VERSION(114, 74);
+          CASE_CUDA_VERSION(113, 73);
+          CASE_CUDA_VERSION(112, 72);
+          CASE_CUDA_VERSION(111, 71);
+          CASE_CUDA_VERSION(110, 70);
+          CASE_CUDA_VERSION(102, 65);
+          CASE_CUDA_VERSION(101, 64);
+          CASE_CUDA_VERSION(100, 63);
+          CASE_CUDA_VERSION(92, 61);
+          CASE_CUDA_VERSION(91, 61);
+          CASE_CUDA_VERSION(90, 60);
+#undef CASE_CUDA_VERSION
+        default:
+          PtxFeature = "+ptx42";
+        }
+        CmdArgs.push_back(TCArgs.MakeArgString("-plugin-opt=device-mattr=" +
+                                               StringRef(PtxFeature)));
+      }
+    }
   }
 
   if (Args.hasArg(options::OPT_Z_Xlinker__no_demangle))
@@ -571,7 +630,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (ToolChain.ShouldLinkCXXStdlib(Args)) {
       bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
-                                 !Args.hasArg(options::OPT_static);
+        !Args.hasArg(options::OPT_static);
       if (OnlyLibstdcxxStatic)
         CmdArgs.push_back("-Bstatic");
       ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
