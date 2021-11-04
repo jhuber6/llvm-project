@@ -10,8 +10,8 @@ namespace llvm {
 class Tool;
 class ToolChain;
 
-using ArgList = SmallVector<const char *, 4>;
-using Arg = const char *;
+using ArgList = SmallVector<StringRef, 4>;
+using Arg = StringRef;
 
 class ToolChain {
 protected:

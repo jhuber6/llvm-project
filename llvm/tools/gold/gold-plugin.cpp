@@ -78,8 +78,6 @@ static ld_plugin_get_input_file get_input_file = nullptr;
 static ld_plugin_message message = discard_message;
 static ld_plugin_get_wrap_symbols get_wrap_symbols = nullptr;
 
-static bool linkedBitcode = false;
-
 namespace {
 struct claimed_file {
   void *handle;
@@ -131,7 +129,9 @@ static bool IsExecutable = false;
 static bool SplitSections = true;
 static Optional<Reloc::Model> RelocationModel = None;
 static std::string output_name = "";
-static std::unordered_map<std::string, std::list<claimed_file>> TargetModules;
+static std::list<claimed_file> Modules;
+static std::list<claimed_file> DeviceModules;
+static std::unordered_map<std::string, bool> DeviceFiles;
 static DenseMap<int, void *> FDToLeaderHandle;
 static StringMap<ResolutionInfo> ResInfo;
 static std::vector<std::string> Cleanup;
@@ -160,6 +160,16 @@ static std::string obj_path;
 static std::string extra_library_path;
 static std::string triple;
 static std::string mcpu;
+// The offloading architecture we're using e.g. sm_70
+static std::string device_arch;
+// The offloading target triple we're using
+static std::string device_triple;
+// The target triples to use for unbundling offload bundles
+static std::string bundle_triples;
+// The OpenMP offloading bitcode library to use.
+static std::string device_bclib;
+// The device attributes, e.g. +ptx64
+static std::string device_mattr;
 // When the thinlto plugin option is specified, only read the function
 // the information from intermediate files and write a combined
 // global index for the ThinLTO backends.
@@ -318,6 +328,16 @@ static void process_plugin_option(const char *opt_) {
     RemarksFormat = std::string(opt);
   } else if (opt.consume_front("stats-file=")) {
     stats_file = std::string(opt);
+  } else if (opt.consume_front("bundle-triples=")) {
+    bundle_triples = std::string(opt);
+  } else if (opt.consume_front("device-triple=")) {
+    device_triple = std::string(opt);
+  } else if (opt.consume_front("device-arch=")) {
+    device_arch = std::string(opt);
+  } else if (opt.consume_front("device-bclib=")) {
+    device_bclib = std::string(opt);
+  } else if (opt.consume_front("device-mattr=")) {
+    device_mattr = std::string(opt);
   } else {
     // Save this option to pass to the code generator.
     // ParseCommandLineOptions() expects argv[0] to be program name. Lazily
@@ -471,6 +491,10 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
     message(LDPL_ERROR, "release_input_file not passed to LLVMgold.");
     return LDPS_ERR;
   }
+  if (!options::device_bclib.empty()) {
+    add_input_file(options::device_bclib.c_str());
+    DeviceFiles[options::device_bclib] = true;
+  }
 
   return LDPS_OK;
 }
@@ -512,30 +536,39 @@ template <typename T> static T check(Expected<T> E) {
   return T();
 }
 
+static void recordFile(const std::string &Filename, bool TempOutFile) {
+  if (add_input_file(Filename.c_str()) != LDPS_OK)
+    message(LDPL_FATAL,
+            "Unable to add .o file to the link. File left behind in: %s",
+            Filename.c_str());
+  if (TempOutFile)
+    Cleanup.push_back(Filename);
+}
+
 static ld_plugin_status handleOffloadBundle(const ld_plugin_input_file *file) {
-  SmallString<128> HostIRFile = llvm::sys::path::stem(file->name);
-  SmallString<128> DeviceIRFile = llvm::sys::path::stem(file->name);
+  StringRef Extension = sys::path::extension(file->name);
+  StringRef Prefix = StringRef(file->name).drop_back(Extension.size());
 
-  HostIRFile += ".host.o";
-  DeviceIRFile += ".device.o";
+  SmallString<128> HostFile = Prefix;
+  SmallString<128> DeviceFile = Prefix;
 
-  SmallVector<StringRef> Outputs = {HostIRFile.c_str(), DeviceIRFile.c_str()};
-  SmallVector<StringRef> Triples = {"host-x86_64-unknown-linux-gnu",
-                                    "openmp-nvptx64"};
+  HostFile += "-host.o";
+  DeviceFile += "-device.o";
+
+  SmallVector<StringRef> Outputs = {HostFile, DeviceFile};
+  SmallVector<StringRef> Triples;
+  for (const auto &Triple : llvm::split(options::bundle_triples, ","))
+    Triples.push_back(Triple);
 
   if (auto Err = unbundleFiles(file->name, Outputs, Triples)) {
-    message(LDPL_FATAL, "LLVM gold plugin failed to unbundle");
+    message(LDPL_FATAL, "LLVM gold plugin failed to unbundle files.");
     return LDPS_ERR;
   }
 
   for (auto Output : Outputs)
-    add_input_file(Output.data());
+    recordFile(Output.str(), options::TheOutputType == options::OT_SAVE_TEMPS);
 
-  if (!linkedBitcode) {
-    linkedBitcode = true;
-    add_input_file("/home2/3n4/clang/lib/libomptarget-nvptx-sm_70.bc");
-  }
-
+  DeviceFiles[DeviceFile.c_str()] = true;
   return LDPS_OK;
 }
 
@@ -595,10 +628,13 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
   }
 
   std::unique_ptr<InputFile> Obj = std::move(*ObjOrErr);
+  bool &IsDeviceFile = DeviceFiles[file->name];
 
-  auto &Modules = TargetModules[Obj->getTargetTriple().str()];
-  Modules.emplace_back();
-  claimed_file &cf = Modules.back();
+  if (IsDeviceFile)
+    DeviceModules.emplace_back();
+  else
+    Modules.emplace_back();
+  claimed_file &cf = IsDeviceFile ? DeviceModules.back() : Modules.back();
 
   cf.handle = file->handle;
   // Keep track of the first handle for each file descriptor, since there are
@@ -625,8 +661,8 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     sym.version = nullptr;
 
     SmallString<128> Name = Sym.getName();
-    if (Obj->getTargetTriple() == "nvptx64")
-      Name += "-nvptx64";
+    if (IsDeviceFile)
+      Name += Obj->getTargetTriple();
     sym.name = strdup(Name.c_str());
 
     ResolutionInfo &Res = ResInfo[Name];
@@ -845,15 +881,6 @@ static void addModule(LTO &Lto, claimed_file &F, const void *View,
         std::string("Failed to link module ") + F.name);
 }
 
-static void recordFile(const std::string &Filename, bool TempOutFile) {
-  if (add_input_file(Filename.c_str()) != LDPS_OK)
-    message(LDPL_FATAL,
-            "Unable to add .o file to the link. File left behind in: %s",
-            Filename.c_str());
-  if (TempOutFile)
-    Cleanup.push_back(Filename);
-}
-
 /// Return the desired output filename given a base input name, a flag
 /// indicating whether a temp file should be generated, and an optional task id.
 /// The new filename generated is returned in \p NewFilename.
@@ -914,10 +941,11 @@ static std::unique_ptr<LTO> createLTO(IndexWriteCallback OnIndexWrite,
   Config Conf;
   ThinBackend Backend;
 
-  if (TheTriple.getTriple() != "nvptx64")
-    Conf.CPU = options::mcpu;
+  if (!options::device_arch.empty() &&
+      TheTriple == Triple(options::device_triple))
+    Conf.CPU = options::device_arch;
   else
-    Conf.CPU = "sm_70";
+    Conf.CPU = options::mcpu;
   Conf.Options = codegen::InitTargetOptionsFromCodeGenFlags(TheTriple);
 
   // Disable the new X86 relax relocations since gold might not support them.
@@ -931,6 +959,10 @@ static std::unique_ptr<LTO> createLTO(IndexWriteCallback OnIndexWrite,
     Conf.Options.DataSections = SplitSections;
 
   Conf.MAttrs = codegen::getMAttrs();
+  if (!options::device_mattr.empty() &&
+      TheTriple == Triple(options::device_triple))
+    Conf.MAttrs.push_back(options::device_mattr);
+
   Conf.RelocModel = RelocationModel;
   Conf.CodeModel = codegen::getExplicitCodeModel();
   Conf.CGOptLevel = getCGOptLevel();
@@ -951,7 +983,7 @@ static std::unique_ptr<LTO> createLTO(IndexWriteCallback OnIndexWrite,
         llvm::heavyweight_hardware_concurrency(options::Parallelism));
   }
 
-  Conf.OverrideTriple = TheTriple.getTriple();
+  Conf.OverrideTriple = options::triple;
   Conf.DefaultTriple = TheTriple.getTriple();
 
   Conf.DiagHandler = diagnosticHandler;
@@ -986,7 +1018,7 @@ static std::unique_ptr<LTO> createLTO(IndexWriteCallback OnIndexWrite,
     Conf.CGFileType = CGFT_AssemblyFile;
     break;
   }
-  if (TheTriple.getTriple() == "nvptx64")
+  if (TheTriple.isNVPTX())
     Conf.CGFileType = CGFT_AssemblyFile;
 
   if (!options::sample_profile.empty())
@@ -1162,10 +1194,11 @@ runLTO(std::list<claimed_file> Modules, Triple TheTriple) {
 }
 
 static std::vector<std::pair<SmallString<128>, bool>>
-runOffloadingLTO(std::list<claimed_file> Modules, Triple TheTriple) {
-  NVPTX::CudaToolChain TC({}, Triple("nvptx64"));
+runOffloadingLTO(std::list<claimed_file> Modules) {
+  std::string CPU = "-mcpu=" + options::device_arch;
+  NVPTX::CudaToolChain TC({CPU}, Triple(options::device_triple));
   std::vector<std::pair<SmallString<128>, bool>> Files =
-      runLTO(Modules, TheTriple);
+      runLTO(Modules, Triple(options::device_triple));
   for (auto &File : Files) {
     if (auto Err = TC.run(File.first.c_str()))
       message(LDPL_ERROR, "Failed to run vendor toolchain\n");
@@ -1184,7 +1217,7 @@ runOffloadingLTO(std::list<claimed_file> Modules, Triple TheTriple) {
 /// get_symbols to see if any of our definitions have been overridden by a
 /// native object file. Then, perform optimization and codegen.
 static ld_plugin_status allSymbolsReadHook() {
-  if (TargetModules.empty())
+  if (Modules.empty())
     return LDPS_OK;
 
   if (unsigned NumOpts = options::extra.size())
@@ -1192,11 +1225,10 @@ static ld_plugin_status allSymbolsReadHook() {
 
   std::vector<std::pair<SmallString<128>, bool>> Files;
   std::vector<std::pair<SmallString<128>, bool>> OffloadFiles;
-  if (!TargetModules["nvptx64"].empty())
-    OffloadFiles =
-        runOffloadingLTO(TargetModules["nvptx64"], Triple("nvptx64"));
-  auto &Modules = TargetModules["x86_64-unknown-linux-gnu"];
-  Files = runLTO(Modules, Triple("x86_64-unknown-linux-gnu"));
+  if (!DeviceModules.empty())
+    OffloadFiles = runOffloadingLTO(DeviceModules);
+
+  Files = runLTO(Modules, Triple(sys::getDefaultTargetTriple()));
 
   if (options::TheOutputType == options::OT_DISABLE ||
       options::TheOutputType == options::OT_BC_ONLY ||

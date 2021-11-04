@@ -42,7 +42,7 @@ Error CudaToolChain::run(Arg Input, Job JobType) {
       return Err;
     LinkerInput = *AssemblerTemp;
   } else {
-    LinkerInput = Input;
+    LinkerInput = Input.str();
   }
 
   ErrorOr<std::string> LinkerTemp = getTempFile(Input, "o");
@@ -70,7 +70,10 @@ Error Assembler::run(Arg Input, Arg Output) {
 
   assert(TC.getTriple().isNVPTX() && "Wrong platform");
 
-  const char *GPUArchName = "sm_70";
+  StringRef GPUArchName;
+  for (const auto &Arg : TC.getArgs())
+    if (Arg.contains("mcpu="))
+      GPUArchName = Arg.drop_front(sizeof("mcpu="));
 
   ErrorOr<std::string> Executable = getExecutablePath("ptxas");
   if (std::error_code EC = Executable.getError())
@@ -97,7 +100,10 @@ Error Linker::run(Arg Input, Arg Output) {
 
   assert(TC.getTriple().isNVPTX() && "Wrong platform");
 
-  const char *GPUArchName = "sm_70";
+  StringRef GPUArchName;
+  for (const auto &Arg : TC.getArgs())
+    if (Arg.contains("mcpu="))
+      GPUArchName = Arg.drop_front(sizeof("mcpu="));
 
   ErrorOr<std::string> Executable = getExecutablePath("nvlink");
   if (std::error_code EC = Executable.getError())
