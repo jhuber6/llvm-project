@@ -190,8 +190,7 @@ void addOpenMPDeviceRTL(const Driver &D, const llvm::opt::ArgList &DriverArgs,
 
 std::string getOpenMPDeviceRTL(const Driver &D,
                                const llvm::opt::ArgList &DriverArgs,
-                               const llvm::Triple &Triple,
-                               StringRef Arch);
+                               const llvm::Triple &Triple, StringRef Arch);
 } // end namespace tools
 } // end namespace driver
 } // end namespace clang

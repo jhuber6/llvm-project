@@ -573,9 +573,8 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
             TCArgs.MakeArgString("-plugin-opt=device-arch=" + GPUArchName));
         CmdArgs.push_back(
             TCArgs.MakeArgString("-plugin-opt=device-bclib=" + BitcodeLib));
-        CmdArgs.push_back(
-            TCArgs.MakeArgString("-plugin-opt=device-triple=" +
-              TC->getTriple().str()));
+        CmdArgs.push_back(TCArgs.MakeArgString("-plugin-opt=device-triple=" +
+                                               TC->getTriple().str()));
         CudaInstallationDetector CudaInstallation(D, *TC->getAuxTriple(),
                                                   TCArgs);
 
@@ -630,7 +629,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (ToolChain.ShouldLinkCXXStdlib(Args)) {
       bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
-        !Args.hasArg(options::OPT_static);
+                                 !Args.hasArg(options::OPT_static);
       if (OnlyLibstdcxxStatic)
         CmdArgs.push_back("-Bstatic");
       ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
