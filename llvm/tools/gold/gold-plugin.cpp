@@ -566,7 +566,7 @@ static ld_plugin_status handleOffloadBundle(const ld_plugin_input_file *file) {
   }
 
   for (auto Output : Outputs)
-    recordFile(Output.str(), options::TheOutputType == options::OT_SAVE_TEMPS);
+    recordFile(Output.str(), options::TheOutputType != options::OT_SAVE_TEMPS);
 
   DeviceFiles[DeviceFile.c_str()] = true;
   return LDPS_OK;
@@ -1197,18 +1197,42 @@ static std::vector<std::pair<SmallString<128>, bool>>
 runOffloadingLTO(std::list<claimed_file> Modules) {
   std::string CPU = "-mcpu=" + options::device_arch;
   NVPTX::CudaToolChain TC({CPU}, Triple(options::device_triple));
+
   std::vector<std::pair<SmallString<128>, bool>> Files =
       runLTO(Modules, Triple(options::device_triple));
+
   for (auto &File : Files) {
+    int WrapperFD;
+    int BinaryFD;
+    SmallString<128> WrapperFile;
+    SmallString<128> WrapperBinary;
+
+    if (std::error_code EC = sys::fs::createTemporaryFile(
+            output_name, ".bc", WrapperFD, WrapperFile))
+      message(LDPL_ERROR, "Failed to create a temp file\n");
+    if (std::error_code EC = sys::fs::createTemporaryFile(
+            output_name, ".o", BinaryFD, WrapperBinary))
+      message(LDPL_ERROR, "Failed to create a temp file\n");
+
     if (auto Err = TC.run(File.first.c_str()))
       message(LDPL_ERROR, "Failed to run vendor toolchain\n");
-    if (auto Err = wrapFiles(TC.getOutputFile(), "offload-wrapper.bc",
-                             Triple("x86_64-unknown-linux-gnu")))
-      message(LDPL_ERROR, "Failed to wrap files\n");
-    if (auto Err =
-            compileWrappedFiles("offload-wrapper.bc", "offload-wrapper.o"))
-      message(LDPL_ERROR, "Failed to wrap files\n");
-    File.first = "offload-wrapper.o";
+
+    // Cleanup temp files created by the vendor tool-chain.
+    for (auto &TempFile : TC.getTempFiles())
+      if (options::TheOutputType != options::OT_SAVE_TEMPS)
+        Cleanup.push_back(TempFile);
+
+    // Create offloading wrapper to link in device image.
+    if (auto Err = wrapFiles(TC.getOutputFile(), WrapperFile,
+                             Triple(sys::getDefaultTargetTriple())))
+      message(LDPL_ERROR, "Failed to create offload wrapper\n");
+    if (auto Err = compileWrappedFiles(WrapperFile, WrapperBinary))
+      message(LDPL_ERROR, "Failed to compile offload wrapper\n");
+    if (options::TheOutputType != options::OT_SAVE_TEMPS)
+      Cleanup.push_back(WrapperFile.c_str());
+
+    // Replace the LTO file with the wrapper file to give to the linker.
+    File = {WrapperBinary, true};
   }
   return Files;
 }

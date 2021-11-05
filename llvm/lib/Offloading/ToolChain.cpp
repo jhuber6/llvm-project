@@ -4,9 +4,6 @@
 
 using namespace llvm;
 
-ToolChain::~ToolChain() {
-  for (auto &File : TempFiles)
-    sys::fs::remove(File);
-}
+ToolChain::~ToolChain() {}
 
 Tool::~Tool() {}

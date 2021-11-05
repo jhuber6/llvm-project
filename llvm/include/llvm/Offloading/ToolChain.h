@@ -40,6 +40,7 @@ public:
   ArgList getArgs() const { return Args; }
   const MemoryBuffer *getOutput() const { return Output.get(); }
   std::string getOutputFile() const { return OutputFile; }
+  const SmallVectorImpl<std::string> &getTempFiles() const { return TempFiles; }
 
   virtual const Tool *getAssembler() const = 0;
   virtual const Tool *getLinker() const = 0;
