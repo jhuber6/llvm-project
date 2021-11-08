@@ -611,6 +611,12 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         }
         CmdArgs.push_back(TCArgs.MakeArgString("-plugin-opt=device-mattr=" +
                                                StringRef(PtxFeature)));
+
+        if (Args.hasFlag(options::OPT_fopenmp_target_jit,
+                         options::OPT_fno_openmp_target_jit,
+                         /*Default=*/false))
+          CmdArgs.push_back(
+              TCArgs.MakeArgString("-plugin-opt=device-embed-bc"));
       }
     }
   }

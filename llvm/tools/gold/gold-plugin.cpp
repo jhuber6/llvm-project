@@ -170,6 +170,8 @@ static std::string bundle_triples;
 static std::string device_bclib;
 // The device attributes, e.g. +ptx64
 static std::string device_mattr;
+// Whether we should embed bitcode instead of a device image e.g. for JIT.
+static bool emit_device_bc = false;
 // When the thinlto plugin option is specified, only read the function
 // the information from intermediate files and write a combined
 // global index for the ThinLTO backends.
@@ -338,6 +340,8 @@ static void process_plugin_option(const char *opt_) {
     device_bclib = std::string(opt);
   } else if (opt.consume_front("device-mattr=")) {
     device_mattr = std::string(opt);
+  } else if (opt.consume_front("device-embed-bc")) {
+    emit_device_bc = true;
   } else {
     // Save this option to pass to the code generator.
     // ParseCommandLineOptions() expects argv[0] to be program name. Lazily
@@ -970,6 +974,7 @@ static std::unique_ptr<LTO> createLTO(IndexWriteCallback OnIndexWrite,
   Conf.OptLevel = options::OptLevel;
   Conf.PTO.LoopVectorization = options::OptLevel > 1;
   Conf.PTO.SLPVectorization = options::OptLevel > 1;
+
   Conf.AlwaysEmitRegularLTOObj = !options::obj_path.empty();
 
   if (options::thinlto_index_only) {
@@ -1176,6 +1181,20 @@ runLTO(std::list<claimed_file> Modules, Triple TheTriple) {
   };
 
   FileCache Cache;
+  if (options::emit_device_bc && TheTriple == Triple(options::device_triple))
+    Lto->getConfig().PostInternalizeModuleHook = [&](size_t Task,
+                                                     const Module &M) {
+      std::error_code EC;
+      Files[Task].second = !SaveTemps;
+      int FD = getOutputFileName(Filename, /* TempOutFile */ !SaveTemps,
+                                 Files[Task].first, Task);
+      raw_fd_ostream OS(Files[Task].first, EC, sys::fs::OpenFlags::OF_None);
+      if (EC)
+        message(LDPL_FATAL, "Failed to write the output file.");
+      WriteBitcodeToFile(M, OS, /* ShouldPreserveUseListOrder */ false);
+      return false;
+    };
+
   if (!options::cache_dir.empty())
     Cache = check(localCache("ThinLTO", "Thin", options::cache_dir, AddBuffer));
 
@@ -1202,6 +1221,7 @@ runOffloadingLTO(std::list<claimed_file> Modules) {
       runLTO(Modules, Triple(options::device_triple));
 
   for (auto &File : Files) {
+    bool SaveTemps = options::TheOutputType != options::OT_SAVE_TEMPS;
     int WrapperFD;
     int BinaryFD;
     SmallString<128> WrapperFile;
@@ -1214,21 +1234,25 @@ runOffloadingLTO(std::list<claimed_file> Modules) {
             output_name, ".o", BinaryFD, WrapperBinary))
       message(LDPL_ERROR, "Failed to create a temp file\n");
 
-    if (auto Err = TC.run(File.first.c_str()))
-      message(LDPL_ERROR, "Failed to run vendor toolchain\n");
+    if (!options::emit_device_bc)
+      if (auto Err = TC.run(File.first.c_str()))
+        message(LDPL_ERROR, "Failed to run vendor toolchain\n");
 
-    // Cleanup temp files created by the vendor tool-chain.
-    for (auto &TempFile : TC.getTempFiles())
-      if (options::TheOutputType != options::OT_SAVE_TEMPS)
-        Cleanup.push_back(TempFile);
+    auto WrapperInput =
+        (options::emit_device_bc) ? File.first.c_str() : TC.getOutputFile();
 
     // Create offloading wrapper to link in device image.
-    if (auto Err = wrapFiles(TC.getOutputFile(), WrapperFile,
+    if (auto Err = wrapFiles(WrapperInput, WrapperFile,
                              Triple(sys::getDefaultTargetTriple())))
       message(LDPL_ERROR, "Failed to create offload wrapper\n");
     if (auto Err = compileWrappedFiles(WrapperFile, WrapperBinary))
       message(LDPL_ERROR, "Failed to compile offload wrapper\n");
-    if (options::TheOutputType != options::OT_SAVE_TEMPS)
+
+    // Cleanup temp files created by the vendor tool-chain and wrapper.
+    for (auto &TempFile : TC.getTempFiles())
+      if (SaveTemps)
+        Cleanup.push_back(TempFile);
+    if (SaveTemps)
       Cleanup.push_back(WrapperFile.c_str());
 
     // Replace the LTO file with the wrapper file to give to the linker.

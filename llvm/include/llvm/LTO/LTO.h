@@ -259,6 +259,9 @@ public:
   /// full description of tasks see LTOBackend.h.
   unsigned getMaxTasks() const;
 
+  /// Returns the LTO config.
+  Config &getConfig() { return Conf; }
+
   /// Runs the LTO pipeline. This function calls the supplied AddStream
   /// function to add native object files to the link.
   ///

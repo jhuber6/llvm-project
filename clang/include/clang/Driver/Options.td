@@ -2441,6 +2441,10 @@ def fno_openmp_assume_teams_oversubscription : Flag<["-"], "fno-openmp-assume-te
   Group<f_Group>, Flags<[CC1Option, NoArgumentUnused, HelpHidden]>;
 def fno_openmp_assume_threads_oversubscription : Flag<["-"], "fno-openmp-assume-threads-oversubscription">, 
   Group<f_Group>, Flags<[CC1Option, NoArgumentUnused, HelpHidden]>;
+def fopenmp_target_jit : Flag<["-"], "fopenmp-target-jit">, Group<f_Group>,
+  Flags<[CC1Option, NoArgumentUnused, HelpHidden]>;
+def fno_openmp_target_jit : Flag<["-"], "fno-openmp-target-jit">, Group<f_Group>,
+  Flags<[NoArgumentUnused, HelpHidden]>;
 defm openmp_target_new_runtime: BoolFOption<"openmp-target-new-runtime",
   LangOpts<"OpenMPTargetNewRuntime">, DefaultFalse,
   PosFlag<SetTrue, [CC1Option], "Use the new bitcode library for OpenMP offloading">,
