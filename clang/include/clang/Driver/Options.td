@@ -2473,6 +2473,10 @@ defm openmp_target_new_runtime: BoolFOption<"openmp-target-new-runtime",
   LangOpts<"OpenMPTargetNewRuntime">, DefaultTrue,
   PosFlag<SetTrue, [CC1Option], "Use the new bitcode library for OpenMP offloading">,
   NegFlag<SetFalse>>;
+  def fopenmp_target_jit : Flag<["-"], "fopenmp-target-jit">, Group<f_Group>,
+  HelpText<"Enable JIT comilation for OpenMP Offloading">, Flags<[ NoArgumentUnused]>;
+def fno_openmp_target_jit : Flag<["-"], "fno-openmp-target-jit">, Group<f_Group>,
+  Flags<[NoArgumentUnused, HelpHidden]>;
 defm openmp_optimistic_collapse : BoolFOption<"openmp-optimistic-collapse",
   LangOpts<"OpenMPOptimisticCollapse">, DefaultFalse,
   PosFlag<SetTrue, [CC1Option]>, NegFlag<SetFalse>, BothFlags<[NoArgumentUnused, HelpHidden]>>;

@@ -733,29 +733,7 @@ std::unique_ptr<lto::LTO> createLTO(
 
   Conf.PTO.LoopVectorization = Conf.OptLevel > 1;
   Conf.PTO.SLPVectorization = Conf.OptLevel > 1;
-
-  if (SaveTemps) {
-    auto HandleError = [&](Error Err) {
-      logAllUnhandledErrors(std::move(Err),
-                            WithColor::error(errs(), LinkerExecutable));
-      exit(1);
-    };
-    Conf.PostInternalizeModuleHook = [&](size_t, const Module &M) {
-      SmallString<128> TempFile;
-      if (Error Err = createOutputFile(sys::path::filename(ExecutableName) +
-                                           "-device-" + TheTriple.getTriple(),
-                                       "bc", TempFile))
-        HandleError(std::move(Err));
-
-      std::error_code EC;
-      raw_fd_ostream LinkedBitcode(TempFile, EC, sys::fs::OF_None);
-      if (EC)
-        HandleError(errorCodeToError(EC));
-      WriteBitcodeToFile(M, LinkedBitcode);
-      return true;
-    };
-  }
-  Conf.PostOptModuleHook = Hook;
+  Conf.PostInternalizeModuleHook = Hook;
   if (TheTriple.isNVPTX())
     Conf.CGFileType = CGFT_AssemblyFile;
   else
@@ -836,7 +814,7 @@ Error linkBitcodeFiles(SmallVectorImpl<std::string> &InputFiles,
   auto OutputBitcode = [&](size_t Task, const Module &M) {
     SmallString<128> TempFile;
     if (Error Err = createOutputFile(sys::path::filename(ExecutableName) +
-                                         "-jit-" + TheTriple.getTriple(),
+                                         "-device-" + TheTriple.getTriple(),
                                      "bc", TempFile))
       HandleError(std::move(Err));
 
@@ -852,8 +830,9 @@ Error linkBitcodeFiles(SmallVectorImpl<std::string> &InputFiles,
   // We assume visibility of the whole program if every input file was bitcode.
   bool WholeProgram = BitcodeFiles.size() == InputFiles.size();
   auto LTOBackend =
-      (EmbedBitcode) ? createLTO(TheTriple, Arch, WholeProgram, OutputBitcode)
-                     : createLTO(TheTriple, Arch, WholeProgram);
+      (EmbedBitcode || SaveTemps)
+          ? createLTO(TheTriple, Arch, WholeProgram, OutputBitcode)
+          : createLTO(TheTriple, Arch, WholeProgram);
 
   // We need to resolve the symbols so the LTO backend knows which symbols need
   // to be kept or can be internalized. This is a simplified symbol resolution

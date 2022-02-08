@@ -8140,6 +8140,12 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
   auto OpenMPTCRange = C.getOffloadToolChains<Action::OFK_OpenMP>();
   ArgStringList CmdArgs;
 
+  if (!C.getDriver().isUsingLTO(/* IsOffload */ true) &&
+      Args.hasFlag(options::OPT_fopenmp_target_jit,
+                   options::OPT_fno_openmp_target_jit, /*Default*/ false)) {
+    C.getDriver().Diag(clang::diag::err_drv_openmp_jit_without_lto);
+  }
+
   // Pass the CUDA path to the linker wrapper tool.
   for (auto &I : llvm::make_range(OpenMPTCRange.first, OpenMPTCRange.second)) {
     const ToolChain *TC = I.second;
@@ -8207,6 +8213,11 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
       if (!OOpt.empty())
         CmdArgs.push_back(Args.MakeArgString(Twine("-opt-level=O") + OOpt));
     }
+
+    if (Args.hasFlag(options::OPT_fopenmp_target_jit,
+                     options::OPT_fno_openmp_target_jit,
+                     /*Default=*/false))
+      CmdArgs.push_back(Args.MakeArgString("-target-embed-bc"));
   }
 
   CmdArgs.push_back("-host-triple");
