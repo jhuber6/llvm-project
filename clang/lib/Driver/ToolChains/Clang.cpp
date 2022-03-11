@@ -8246,7 +8246,13 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
       if (CudaInstallation.isValid())
         CmdArgs.push_back(Args.MakeArgString(
             "--cuda-path=" + CudaInstallation.getInstallPath()));
-      break;
+
+      if (D.isUsingLTO(/* IsOffload */ true)) {
+        const ArgList &TCArgs =
+            C.getArgsForToolChain(TC, "", Action::OFK_OpenMP);
+        StringRef Arch = TCArgs.getLastArgValue(options::OPT_march_EQ);
+        std::string LibDeviceFile = CudaInstallation.getLibDeviceFile(Arch);
+      }
     }
   }
 
@@ -8304,10 +8310,24 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
                          TC->getTriple());
 
       if (!BitcodeLibrary.empty())
-        CmdArgs.push_back(Args.MakeArgString(
-            "-target-library=" +
-            Action::GetOffloadKindName(Action::OFK_OpenMP) + "-" +
-            TC->getTripleString() + "-" + Arch + "=" + BitcodeLibrary.back()));
+        CmdArgs.push_back(
+            Args.MakeArgString("-target-library=" + TC->getTripleString() +
+                               "-" + Arch + "=" + BitcodeLibrary.back()));
+
+      ArgStringList MathLibrary;
+      addOpenMPMathRTL(TCDriver, TCArgs, MathLibrary, TC->getTriple(), true);
+
+      if (!MathLibrary.empty())
+        CmdArgs.push_back(
+            Args.MakeArgString("-target-library=" + TC->getTripleString() +
+                               "-" + Arch + "=" + MathLibrary.back()));
+
+      CudaInstallationDetector CudaInstallation(D, TheTriple, Args);
+      std::string LibDeviceFile = CudaInstallation.getLibDeviceFile(Arch);
+      if (!LibDeviceFile.empty())
+        CmdArgs.push_back(
+            Args.MakeArgString("-target-library=" + TC->getTripleString() +
+                               "-" + Arch + "=" + LibDeviceFile));
     }
 
     // Pass in the optimization level to use for LTO.
