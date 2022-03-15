@@ -52,6 +52,24 @@ public:
       Texture,  // Builtin texture
     };
 
+    /// The kind flag of the target region entry.
+    enum OffloadRegionEntryKindFlag : uint32_t {
+      /// Mark the region entry as a kernel.
+      OffloadRegionKernelEntry = 0x0,
+    };
+
+    /// The kind flag of the global variable entry.
+    enum OffloadVarEntryKindFlag : uint32_t {
+      /// Mark the entry as a global variable.
+      OffloadGlobalVarEntry = 0x0,
+      /// Mark the entry as a managed global variable.
+      OffloadGlobalManagedEntry = 0x1,
+      /// Mark the entry as a surface variable.
+      OffloadGlobalSurfaceEntry = 0x2,
+      /// Mark the entry as a texture variable.
+      OffloadGlobalTextureEntry = 0x4,
+    };
+
   private:
     unsigned Kind : 2;
     unsigned Extern : 1;
