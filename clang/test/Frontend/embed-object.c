@@ -1,6 +1,6 @@
-// RUN: %clang_cc1 -x c -triple x86_64-unknown-linux-gnu -emit-llvm -fembed-offload-object=%S/Inputs/empty.h,section
+// RUN: %clang_cc1 -x c -triple x86_64-unknown-linux-gnu -emit-llvm -fembed-offload-object=file=%S/Inputs/empty.h -o - | FileCheck %s
 
-// CHECK: @[[OBJECT:.+]] = private constant [0 x i8] zeroinitializer, section ".llvm.offloading.section"
-// CHECK: @llvm.compiler.used = appending global [3 x i8*] [i8* getelementptr inbounds ([0 x i8], [0 x i8]* @[[OBJECT1]]], section "llvm.metadata"
+// CHECK: @[[OBJECT:.+]] = private constant [104 x i8] c"\10\FF\10\AD\01{{.*}}\00\00", section ".llvm.offloading", align 8
+// CHECK: @llvm.compiler.used = appending global [1 x i8*] [i8* getelementptr inbounds ([104 x i8], [104 x i8]* @[[OBJECT]], i32 0, i32 0)], section "llvm.metadata"
 
 void foo(void) {}

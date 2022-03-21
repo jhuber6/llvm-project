@@ -447,7 +447,7 @@ static SectionKind getELFKindForNamedSection(StringRef Name, SectionKind K) {
       Name == getInstrProfSectionName(IPSK_covfun, Triple::ELF,
                                       /*AddSegmentInfo=*/false) ||
       Name == ".llvmbc" || Name == ".llvmcmd" ||
-      Name.startswith(".llvm.offloading."))
+      Name.startswith(".llvm.offloading"))
     return SectionKind::getMetadata();
 
   if (Name.empty() || Name[0] != '.') return K;

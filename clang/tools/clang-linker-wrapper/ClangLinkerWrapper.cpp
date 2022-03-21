@@ -15,8 +15,10 @@
 //===---------------------------------------------------------------------===//
 
 #include "OffloadWrapper.h"
+
 #include "clang/Basic/Version.h"
 #include "llvm/BinaryFormat/Magic.h"
+#include "llvm/Object/OffloadBinary.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/Constants.h"
@@ -47,6 +49,7 @@
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
+using namespace clang;
 using namespace llvm::object;
 
 static cl::opt<bool> Help("h", cl::desc("Alias for -help"), cl::Hidden);
@@ -146,9 +149,10 @@ static SmallVector<std::string, 16> TempFiles;
 static codegen::RegisterCodeGenFlags CodeGenFlags;
 
 /// Magic section string that marks the existence of offloading data. The
-/// section string will be formatted as `.llvm.offloading.<triple>.<arch>`.
-#define OFFLOAD_SECTION_MAGIC_STR ".llvm.offloading."
+/// section will contain one or more offloading binaries stored contiguously.
+#define OFFLOAD_SECTION_MAGIC_STR ".llvm.offloading"
 
+// TODO: Replace all uses of DeviceFile with OffloadFile.
 /// Information for a device offloading file extracted from the host.
 struct DeviceFile {
   DeviceFile(StringRef Kind, StringRef TheTriple, StringRef Arch,
@@ -199,16 +203,6 @@ void printCommands(ArrayRef<StringRef> CmdArgs) {
   llvm::errs() << " \"" << CmdArgs.front() << "\" ";
   for (auto IC = std::next(CmdArgs.begin()), IE = CmdArgs.end(); IC != IE; ++IC)
     llvm::errs() << *IC << (std::next(IC) != IE ? " " : "\n");
-}
-
-static StringRef getDeviceFileExtension(StringRef DeviceTriple,
-                                        bool IsBitcode = false) {
-  Triple TheTriple(DeviceTriple);
-  if (TheTriple.isAMDGPU() || IsBitcode)
-    return "bc";
-  if (TheTriple.isNVPTX())
-    return "cubin";
-  return "o";
 }
 
 std::string getMainExecutable(const char *Name) {
@@ -296,39 +290,56 @@ extractFromBinary(const ObjectFile &Obj,
   StringRef Prefix = sys::path::stem(Obj.getFileName());
   SmallVector<StringRef, 4> ToBeStripped;
 
-  // Extract data from sections of the form `.llvm.offloading.<triple>.<arch>`.
+  // Extract offloading binaries from sections with the name `.llvm.offloading`.
   for (const SectionRef &Sec : Obj.sections()) {
     Expected<StringRef> Name = Sec.getName();
-    if (!Name || !Name->startswith(OFFLOAD_SECTION_MAGIC_STR))
+    if (!Name || !Name->equals(OFFLOAD_SECTION_MAGIC_STR))
       continue;
 
-    SmallVector<StringRef, 4> SectionFields;
-    Name->split(SectionFields, '.');
-    StringRef Kind = SectionFields[3];
-    StringRef DeviceTriple = SectionFields[4];
-    StringRef Arch = SectionFields[5];
+    Expected<StringRef> Contents = Sec.getContents();
+    if (!Contents)
+      return Contents.takeError();
 
-    if (Expected<StringRef> Contents = Sec.getContents()) {
+    uint64_t Offset = 0;
+    // There could be multiple offloading binaries stored at this section.
+    while (Offset < Contents->size()) {
+      std::unique_ptr<MemoryBuffer> Buffer =
+          MemoryBuffer::getMemBuffer(Contents->drop_front(Offset), *Name,
+                                     /*RequiresNullTerminator*/ false);
+      auto BinaryOrErr = OffloadBinary::read(*Buffer);
+      if (!BinaryOrErr)
+        return BinaryOrErr.takeError();
+      OffloadBinary &Binary = **BinaryOrErr;
+
+      StringRef Kind =
+          getOffloadKindName(static_cast<OffloadKind>(Binary.getOffloadKind()));
+      StringRef Suffix =
+          getImageKindName(static_cast<ImageKind>(Binary.getImageKind()));
+
       SmallString<128> TempFile;
-      StringRef DeviceExtension = getDeviceFileExtension(
-          DeviceTriple, identify_magic(*Contents) == file_magic::bitcode);
-      if (Error Err = createOutputFile(Prefix + "-" + Kind + "-" +
-                                           DeviceTriple + "-" + Arch,
-                                       DeviceExtension, TempFile))
+      if (Error Err =
+              createOutputFile(Prefix + "-" + Kind + "-" + Binary.getTriple() +
+                                   "-" + Binary.getArch(),
+                               Suffix, TempFile))
         return std::move(Err);
 
       Expected<std::unique_ptr<FileOutputBuffer>> OutputOrErr =
-          FileOutputBuffer::create(TempFile, Sec.getSize());
+          FileOutputBuffer::create(TempFile, Binary.getImage().size());
       if (!OutputOrErr)
         return OutputOrErr.takeError();
       std::unique_ptr<FileOutputBuffer> Output = std::move(*OutputOrErr);
-      std::copy(Contents->begin(), Contents->end(), Output->getBufferStart());
+      std::copy(Binary.getImage().bytes_begin(), Binary.getImage().bytes_end(),
+                Output->getBufferStart());
       if (Error E = Output->commit())
         return std::move(E);
 
-      DeviceFiles.emplace_back(Kind, DeviceTriple, Arch, TempFile);
-      ToBeStripped.push_back(*Name);
+      DeviceFiles.emplace_back(Kind, Binary.getTriple(), Binary.getArch(),
+                               TempFile);
+
+      Offset += Binary.getSize();
     }
+
+    ToBeStripped.push_back(*Name);
   }
 
   if (ToBeStripped.empty() || !StripSections)
@@ -405,42 +416,56 @@ extractFromBitcode(std::unique_ptr<MemoryBuffer> Buffer,
 
   SmallVector<GlobalVariable *, 4> ToBeDeleted;
 
-  // Extract data from the global string containing a section of the form
-  // `.llvm.offloading.<triple>.<arch>`.
+  // Extract offloading data from globals with the `.llvm.offloading` section
+  // name.
   for (GlobalVariable &GV : M->globals()) {
-    if (!GV.hasSection() ||
-        !GV.getSection().startswith(OFFLOAD_SECTION_MAGIC_STR))
+    if (!GV.hasSection() || !GV.getSection().equals(OFFLOAD_SECTION_MAGIC_STR))
       continue;
 
     auto *CDS = dyn_cast<ConstantDataSequential>(GV.getInitializer());
     if (!CDS)
       continue;
 
-    SmallVector<StringRef, 4> SectionFields;
-    GV.getSection().split(SectionFields, '.');
-    StringRef Kind = SectionFields[3];
-    StringRef DeviceTriple = SectionFields[4];
-    StringRef Arch = SectionFields[5];
-
     StringRef Contents = CDS->getAsString();
-    SmallString<128> TempFile;
-    StringRef DeviceExtension = getDeviceFileExtension(
-        DeviceTriple, identify_magic(Contents) == file_magic::bitcode);
-    if (Error Err = createOutputFile(Prefix + "-" + Kind + "-" + DeviceTriple +
-                                         "-" + Arch,
-                                     DeviceExtension, TempFile))
-      return std::move(Err);
 
-    Expected<std::unique_ptr<FileOutputBuffer>> OutputOrErr =
-        FileOutputBuffer::create(TempFile, Contents.size());
-    if (!OutputOrErr)
-      return OutputOrErr.takeError();
-    std::unique_ptr<FileOutputBuffer> Output = std::move(*OutputOrErr);
-    std::copy(Contents.begin(), Contents.end(), Output->getBufferStart());
-    if (Error E = Output->commit())
-      return std::move(E);
+    uint64_t Offset = 0;
+    // There could be multiple offloading binaries stored at this section.
+    while (Offset < Contents.size()) {
+      std::unique_ptr<MemoryBuffer> Buffer =
+          MemoryBuffer::getMemBuffer(Contents.drop_front(Offset), GV.getName(),
+                                     /*RequiresNullTerminator*/ false);
+      auto BinaryOrErr = OffloadBinary::read(*Buffer);
+      if (!BinaryOrErr)
+        return BinaryOrErr.takeError();
+      OffloadBinary &Binary = **BinaryOrErr;
 
-    DeviceFiles.emplace_back(Kind, DeviceTriple, Arch, TempFile);
+      StringRef Kind =
+          getOffloadKindName(static_cast<OffloadKind>(Binary.getOffloadKind()));
+      StringRef Suffix =
+          getImageKindName(static_cast<ImageKind>(Binary.getImageKind()));
+
+      SmallString<128> TempFile;
+      if (Error Err =
+              createOutputFile(Prefix + "-" + Kind + "-" + Binary.getTriple() +
+                                   "-" + Binary.getArch(),
+                               Suffix, TempFile))
+        return std::move(Err);
+
+      Expected<std::unique_ptr<FileOutputBuffer>> OutputOrErr =
+          FileOutputBuffer::create(TempFile, Binary.getImage().size());
+      if (!OutputOrErr)
+        return OutputOrErr.takeError();
+      std::unique_ptr<FileOutputBuffer> Output = std::move(*OutputOrErr);
+      std::copy(Binary.getImage().bytes_begin(), Binary.getImage().bytes_end(),
+                Output->getBufferStart());
+      if (Error E = Output->commit())
+        return std::move(E);
+
+      DeviceFiles.emplace_back(Kind, Binary.getTriple(), Binary.getArch(),
+                               TempFile);
+
+      Offset += Binary.getSize();
+    }
     ToBeDeleted.push_back(&GV);
   }
 
