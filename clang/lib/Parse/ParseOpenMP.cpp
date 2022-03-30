@@ -961,6 +961,10 @@ static bool checkExtensionProperty(Parser &P, SourceLocation Loc,
       TraitProperty::implementation_extension_bind_to_declaration)
     return true;
 
+  if (TIProperty.Kind ==
+      TraitProperty::implementation_extension_keep_original_name)
+    return true;
+
   auto IsMatchExtension = [](OMPTraitProperty &TP) {
     return (TP.Kind ==
                 llvm::omp::TraitProperty::implementation_extension_match_all ||

@@ -1481,6 +1481,9 @@ StringRef CodeGenModule::getMangledName(GlobalDecl GD) {
 
   // Keep the first result in the case of a mangling collision.
   const auto *ND = cast<NamedDecl>(GD.getDecl());
+  if (LangOpts.OpenMP)
+    if (auto *A = ND->getAttr<OMPDeclareVariantNoMangleAttr>())
+      ND = A->getFunction();
   std::string MangledName = getMangledNameImpl(*this, GD, ND);
 
   // Ensure either we have different ABIs between host and device compilations,

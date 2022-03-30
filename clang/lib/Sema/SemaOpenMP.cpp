@@ -6911,6 +6911,11 @@ void Sema::ActOnFinishedFunctionDefinitionInOpenMPDeclareVariantScope(
       /*AppendArgs=*/nullptr, /*AppendArgsSize=*/0);
   for (FunctionDecl *BaseFD : Bases)
     BaseFD->addAttr(OMPDeclareVariantA);
+  if (DVScope.TI->isExtensionActive(
+          llvm::omp::TraitProperty::
+              implementation_extension_keep_original_name))
+    D->addAttr(
+        OMPDeclareVariantNoMangleAttr::CreateImplicit(Context, Bases.front()));
 }
 
 ExprResult Sema::ActOnOpenMPCall(ExprResult Call, Scope *Scope,

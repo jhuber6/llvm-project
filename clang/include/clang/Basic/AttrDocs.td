@@ -4294,6 +4294,7 @@ Clang provides the following context selector extensions, used via
     disable_implicit_base
     allow_templates
     bind_to_declaration
+    keep_original_name
 
 The match extensions change when the *entire* context selector is considered a
 match for an OpenMP context. The default is ``all``, with ``none`` no trait in the
@@ -4311,7 +4312,10 @@ definitions are considered as specializations of existing or assumed template
 declarations with the same name. The template parameters for the base functions
 are used to instantiate the specialization. if ``bind_to_declartion`` is given,
 apply the same variant rules to function declarations. This allows the user to
-override declarations with only a function declaration.
+override declarations with only a function declaration.  if
+``keep_original_name`` is given, the variant functions will not be mangled. This
+allows the user to overload the meaning of existing symbols as long as their
+definitions can be dropped.
   }];
 }
 

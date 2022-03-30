@@ -3794,6 +3794,14 @@ def OMPDeclareVariant : InheritableAttr {
   }];
 }
 
+def OMPDeclareVariantNoMangle : InheritableAttr {
+  // This attribute has no spellings as it is only ever created implicitly.
+  let Spellings = [];
+  let Args = [DeclArgument<Function, "Function">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [Undocumented];
+}
+
 def Assumption : InheritableAttr {
   let Spellings = [Clang<"assume">];
   let Subjects = SubjectList<[Function, ObjCMethod]>;
