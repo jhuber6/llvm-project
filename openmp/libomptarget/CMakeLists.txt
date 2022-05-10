@@ -37,6 +37,9 @@ endif()
 
 include_directories(${LIBOMPTARGET_LLVM_INCLUDE_DIRS})
 
+# Build the device RTL before we set the libomptarget include directories.
+add_subdirectory(DeviceRTL)
+
 # This is a list of all the targets that are supported/tested right now.
 set (LIBOMPTARGET_ALL_TARGETS "${LIBOMPTARGET_ALL_TARGETS} aarch64-unknown-linux-gnu")
 set (LIBOMPTARGET_ALL_TARGETS "${LIBOMPTARGET_ALL_TARGETS} aarch64-unknown-linux-gnu-oldDriver")
@@ -85,7 +88,6 @@ set(LIBOMPTARGET_OPENMP_HOST_RTL_FOLDER "${LIBOMP_LIBRARY_DIR}" CACHE STRING
 
 # Build offloading plugins and device RTLs if they are available.
 add_subdirectory(plugins)
-add_subdirectory(DeviceRTL)
 add_subdirectory(tools)
 
 # Add tests.
