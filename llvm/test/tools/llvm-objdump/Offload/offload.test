@@ -1,0 +1,26 @@
+# RUN: llvm-objdump --offloading %S/Inputs/offload-binary.out | FileCheck %s --check-prefix=OFFLOAD
+# RUN: llvm-objdump --offloading %S/Inputs/offload-elf.o | FileCheck %s --check-prefix=OFFLOAD
+
+OFFLOAD: OFFLOADING IMAGE [0]:
+OFFLOAD-NEXT: kind            llvm ir
+OFFLOAD-NEXT: arch            gfx908
+OFFLOAD-NEXT: triple          amdgcn-amd-amdhsa
+OFFLOAD-NEXT: producer        openmp
+
+OFFLOAD: OFFLOADING IMAGE [1]:
+OFFLOAD-NEXT: kind            llvm ir
+OFFLOAD-NEXT: arch            gfx90a
+OFFLOAD-NEXT: triple          amdgcn-amd-amdhsa
+OFFLOAD-NEXT: producer        openmp
+
+OFFLOAD: OFFLOADING IMAGE [2]:
+OFFLOAD-NEXT: kind            cubin
+OFFLOAD-NEXT: arch            sm_52
+OFFLOAD-NEXT: triple          nvptx64-nvidia-cuda
+OFFLOAD-NEXT: producer        openmp
+
+OFFLOAD: OFFLOADING IMAGE [3]:
+OFFLOAD-NEXT: kind            cubin
+OFFLOAD-NEXT: arch            sm_70
+OFFLOAD-NEXT: triple          nvptx64-nvidia-cuda
+OFFLOAD-NEXT: producer        openmp
