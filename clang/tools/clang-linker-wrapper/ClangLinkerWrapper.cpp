@@ -557,9 +557,16 @@ fatbinary(ArrayRef<std::pair<StringRef, StringRef>> InputFiles,
   CmdArgs.push_back(TheTriple.isArch64Bit() ? "-64" : "-32");
   CmdArgs.push_back("--create");
   CmdArgs.push_back(TempFile);
-  for (const auto &FileAndArch : InputFiles)
-    CmdArgs.push_back(Saver.save("--image=profile=" + std::get<1>(FileAndArch) +
-                                 ",file=" + std::get<0>(FileAndArch)));
+  for (const auto &FileAndArch : InputFiles) {
+    if (std::get<0>(FileAndArch).endswith(".s"))
+      CmdArgs.push_back(Saver.save("--image=profile=compute_" +
+                                   std::get<1>(FileAndArch).split("_").second +
+                                   ",file=" + std::get<0>(FileAndArch)));
+    else
+      CmdArgs.push_back(
+          Saver.save("--image=profile=" + std::get<1>(FileAndArch) +
+                     ",file=" + std::get<0>(FileAndArch)));
+  }
 
   if (Error Err = executeCommands(*FatBinaryPath, CmdArgs))
     return std::move(Err);
@@ -820,6 +827,7 @@ bool isValidCIdentifier(StringRef S) {
 
 Error linkBitcodeFiles(SmallVectorImpl<OffloadFile> &InputFiles,
                        SmallVectorImpl<std::string> &OutputFiles,
+                       SmallVectorImpl<std::string> &AuxOutputFiles,
                        const Triple &TheTriple, StringRef Arch) {
   SmallVector<OffloadFile, 4> BitcodeInputFiles;
   DenseSet<StringRef> UsedInRegularObj;
@@ -998,6 +1006,7 @@ Error linkBitcodeFiles(SmallVectorImpl<OffloadFile> &InputFiles,
   // Is we are compiling for NVPTX we need to run the assembler first.
   if (TheTriple.isNVPTX()) {
     for (auto &File : Files) {
+      AuxOutputFiles.push_back(static_cast<std::string>(File));
       auto FileOrErr = nvptx::assemble(File, TheTriple, Arch, !WholeProgram);
       if (!FileOrErr)
         return FileOrErr.takeError();
@@ -1187,7 +1196,9 @@ linkAndWrapDeviceFiles(SmallVectorImpl<OffloadFile> &LinkerInputFiles) {
 
     // First link and remove all the input files containing bitcode.
     SmallVector<std::string> InputFiles;
-    if (Error Err = linkBitcodeFiles(Input, InputFiles, Triple, Arch))
+    SmallVector<std::string> OutputFiles;
+    if (Error Err =
+            linkBitcodeFiles(Input, InputFiles, OutputFiles, Triple, Arch))
       return Err;
 
     // Write any remaining device inputs to an output file for the linker job.
@@ -1205,20 +1216,27 @@ linkAndWrapDeviceFiles(SmallVectorImpl<OffloadFile> &LinkerInputFiles) {
                                          : InputFiles.front();
     if (!OutputOrErr)
       return OutputOrErr.takeError();
+    OutputFiles.push_back(*OutputOrErr);
 
-    // Store the offloading image for each linked output file.
+    // Store the offloading image for each output file.
     for (OffloadKind Kind : ActiveOffloadKinds) {
-      llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> FileOrErr =
-          llvm::MemoryBuffer::getFileOrSTDIN(*OutputOrErr);
-      if (std::error_code EC = FileOrErr.getError())
-        return createFileError(*OutputOrErr, EC);
+      for (StringRef Output : OutputFiles) {
+        // Ignore any PTX output if we're not creating a fatbinary.
+        if (Output.endswith(".s") && Kind != OFK_Cuda)
+          continue;
 
-      OffloadingImage TheImage{};
-      TheImage.TheImageKind = IMG_Object;
-      TheImage.TheOffloadKind = Kind;
-      TheImage.StringData = {{"triple", TripleStr}, {"arch", Arch}};
-      TheImage.Image = std::move(*FileOrErr);
-      Images[Kind].emplace_back(std::move(TheImage));
+        llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> FileOrErr =
+            llvm::MemoryBuffer::getFileOrSTDIN(Output);
+        if (std::error_code EC = FileOrErr.getError())
+          return createFileError(Output, EC);
+
+        OffloadingImage TheImage{};
+        TheImage.TheImageKind = Output.endswith(".s") ? IMG_PTX : IMG_Object;
+        TheImage.TheOffloadKind = Kind;
+        TheImage.StringData = {{"triple", TripleStr}, {"arch", Arch}};
+        TheImage.Image = std::move(*FileOrErr);
+        Images[Kind].emplace_back(std::move(TheImage));
+      }
     }
   }
 

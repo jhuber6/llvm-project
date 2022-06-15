@@ -82,6 +82,16 @@
 // CUDA: fatbinary{{.*}}-64 --create {{.*}}.fatbin --image=profile=sm_52,file={{.*}}.out --image=profile=sm_70,file={{.*}}.out
 
 // RUN: clang-offload-packager -o %t.out \
+// RUN:   --image=file=%S/Inputs/dummy-bc.bc,kind=cuda,triple=nvptx64-nvidia-cuda,arch=sm_52
+// RUN: %clang -cc1 %s -triple x86_64-unknown-linux-gnu -emit-obj -o %t.o \
+// RUN:   -fembed-offload-object=%t.out
+// RUN: clang-linker-wrapper --dry-run --host-triple x86_64-unknown-linux-gnu -linker-path \
+// RUN:   /usr/bin/ld -- %t.o -o a.out 2>&1 | FileCheck %s --check-prefix=CUDA-LTO
+
+// CUDA-LTO: ptxas{{.*}}-m64 -o [[CUBIN:.+]] -O2 --gpu-name sm_52 [[PTX:.+]]
+// CUDA-LTO: fatbinary{{.*}}-64 --create [[FATBINARY:.+]] --image=profile=compute_52,file=[[PTX]] --image=profile=sm_52,file=[[CUBIN]]
+
+// RUN: clang-offload-packager -o %t.out \
 // RUN:   --image=file=%S/Inputs/dummy-elf.o,kind=openmp,triple=amdgcn-amd-amdhsa,arch=gfx908 \
 // RUN:   --image=file=%S/Inputs/dummy-elf.o,kind=openmp,triple=nvptx64-nvidia-cuda,arch=sm_70
 // RUN: %clang -cc1 %s -triple x86_64-unknown-linux-gnu -emit-obj -o %t.o \
