@@ -11,10 +11,21 @@
 
 using namespace __llvm_libc;
 
+// TODO: These should be put in a common utility header.
+#if defined(LIBC_TARGET_ARCH_IS_NVPTX)
+uint32_t __nvvm_read_ptx_sreg_ctaid_x();
+uint32_t get_block_id() { return __nvvm_read_ptx_sreg_ctaid_x(); }
+#elif defined(LIBC_TARGET_ARCH_IS_AMDGPU)
+uint32_t __builtin_amdgcn_workitem_id_x();
+uint32_t get_block_id() { return __builtin_amdgcn_workgroup_id_x(); }
+#else
+uint32_t get_block_id() { return 0; }
+#endif
+
 static void test_add_simple() {
-  constexpr int num_additions = 10000;
+  uint32_t num_additions = 1000 + 10 * get_block_id();
   uint64_t cnt = 0;
-  for (int i = 0; i < num_additions; ++i) {
+  for (uint32_t i = 0; i < num_additions; ++i) {
     rpc::Port port = rpc::client.open(rpc::TEST_INCREMENT);
     port.send_and_recv(
         [=](rpc::Buffer *buffer) {
@@ -30,5 +41,6 @@ static void test_add_simple() {
 
 TEST_MAIN(int argc, char **argv, char **envp) {
   test_add_simple();
+
   return 0;
 }
