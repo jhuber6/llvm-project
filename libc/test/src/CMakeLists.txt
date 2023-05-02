@@ -34,6 +34,23 @@ function(add_fp_unittest name)
   )
 endfunction(add_fp_unittest)
 
+function(add_fp_test name)
+  cmake_parse_arguments(
+    "MATH_TEST"
+    "" # Optional arguments
+    "" # Single value arguments
+    "LINK_LIBRARIES" # Multi-value arguments
+    ${ARGN}
+  )
+
+  list(APPEND MATH_TEST_LINK_LIBRARIES LibcFPTestHelpers)
+  add_libc_test(
+    ${name}
+    LINK_LIBRARIES "${MATH_TEST_LINK_LIBRARIES}"
+    "${MATH_TEST_UNPARSED_ARGUMENTS}"
+  )
+endfunction(add_fp_test)
+
 add_subdirectory(__support)
 add_subdirectory(ctype)
 add_subdirectory(errno)
