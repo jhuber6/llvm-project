@@ -1,5 +1,11 @@
 add_custom_target(libc_stdio_unittests)
 
+if(LIBC_TARGET_ARCHITECTURE_IS_GPU)
+  # These tests are all included on the GPU despite not having any stdio
+  # entrypoints.
+  return()
+endif()
+
 add_libc_unittest(
   fileop_test
   SUITE

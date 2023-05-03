@@ -90,10 +90,10 @@ TEST_F(LlvmLibcBlockStoreTest, PopulateAndIterateReverse10) {
   populate_and_iterate<4, 10, true>();
 }
 
-TEST_F(LlvmLibcBlockStoreTest, Back) {
-  back_test<false>();
-  back_test<true>();
-}
+TEST_F(LlvmLibcBlockStoreTest, Back) { back_test<false>(); }
+
+// FIXME: The AMDGPU backend hangs if these function calls are combined.
+TEST_F(LlvmLibcBlockStoreTest, BackReverse) { back_test<true>(); }
 
 TEST_F(LlvmLibcBlockStoreTest, Empty) {
   empty_test<false>();
