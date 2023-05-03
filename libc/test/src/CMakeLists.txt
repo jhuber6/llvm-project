@@ -24,7 +24,11 @@ function(add_fp_unittest name)
     set(test_type UNIT_TEST_ONLY)
     list(APPEND MATH_UNITTEST_LINK_LIBRARIES libcMPFRWrapper libc_math_test_utils -lmpfr -lgmp)
   endif()
-  list(APPEND MATH_UNITTEST_LINK_LIBRARIES LibcFPTestHelpers)
+  if(MATH_UNITTEST_HERMETIC_TEST_ONLY)
+    list(APPEND MATH_UNITTEST_LINK_LIBRARIES LibcFPTestHelpers)
+  else()
+    list(APPEND MATH_UNITTEST_LINK_LIBRARIES LibcFPTestHelpers LibcFPExceptionHelpers)
+  endif()
 
   add_libc_unittest(
     ${name}
