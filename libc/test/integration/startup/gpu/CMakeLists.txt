@@ -36,3 +36,10 @@ add_integration_test(
   SRCS
     init_fini_array_test.cpp
 )
+
+add_integration_test(
+  startup_rpc_stream_test
+  SUITE libc-startup-tests
+  SRCS
+    rpc_stream_test.cpp
+)

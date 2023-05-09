@@ -54,6 +54,14 @@ template <typename V, typename A> LIBC_INLINE V align_up(V val, A align) {
   return ((val + V(align) - 1) / V(align)) * V(align);
 }
 
+/// The GPU maintains a private variable for each lane while the CPU will need
+/// to provide an indexed array. This utility lets us convert between the two.
+template <typename V> LIBC_INLINE V &lane_value(V *val, uint32_t id) {
+  if constexpr (is_process_gpu())
+    return *val;
+  return val[id];
+}
+
 } // namespace rpc
 } // namespace __llvm_libc
 

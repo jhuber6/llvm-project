@@ -33,17 +33,14 @@ void handle_server() {
 
     switch (port->get_opcode()) {
     case __llvm_libc::rpc::Opcode::PRINT_TO_STDERR: {
-      uint64_t str_size[__llvm_libc::rpc::MAX_LANE_SIZE] = {0};
-      char *strs[__llvm_libc::rpc::MAX_LANE_SIZE] = {nullptr};
-      port->recv_n([&](uint64_t size, uint32_t id) {
-        str_size[id] = size;
-        strs[id] = new char[size];
-        return strs[id];
-      });
-      for (uint64_t i = 0; i < __llvm_libc::rpc::MAX_LANE_SIZE; ++i) {
-        if (strs[i]) {
-          fwrite(strs[i], str_size[i], 1, stderr);
-          delete[] strs[i];
+      uint64_t size[__llvm_libc::rpc::MAX_LANE_SIZE] = {0};
+      void *dst[__llvm_libc::rpc::MAX_LANE_SIZE] = {nullptr};
+
+      port->recv_n(dst, size, [](uint64_t size) { return new char[size]; });
+      for (uint64_t i = 0; i < server.lane_size; ++i) {
+        if (port->get_lane_mask() & 1ul << i) {
+          fwrite(dst[i], size[i], 1, stderr);
+          delete[] reinterpret_cast<uint8_t *>(dst[i]);
         }
       }
       break;
@@ -58,6 +55,15 @@ void handle_server() {
       port->recv_and_send([](__llvm_libc::rpc::Buffer *buffer) {
         reinterpret_cast<uint64_t *>(buffer->data)[0] += 1;
       });
+      break;
+    }
+    case __llvm_libc::rpc::Opcode::TEST_STREAM: {
+      const char *test_str =
+          "ABCDEFGHIJKLMNOPQRSTUVWXYabcdefghijklmnopqrstuvwxy";
+
+      const void **send_ptr = reinterpret_cast<const void **>(&test_str);
+      uint64_t size = 51;
+      port->send_n(send_ptr, &size);
       break;
     }
     default:
