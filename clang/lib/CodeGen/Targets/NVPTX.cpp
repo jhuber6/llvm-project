@@ -211,7 +211,7 @@ void NVPTXABIInfo::computeInfo(CGFunctionInfo &FI) const {
 
 Address NVPTXABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
                                 QualType Ty) const {
-  llvm_unreachable("NVPTX does not support varargs");
+  return EmitVAArgInstr(CGF, VAListAddr, Ty, ABIArgInfo::getDirect());
 }
 
 void NVPTXTargetCodeGenInfo::setTargetAttributes(

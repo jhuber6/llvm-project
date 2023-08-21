@@ -23,6 +23,7 @@
 #include "TargetInfo/NVPTXTargetInfo.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/CodeGen/DesugarVariadics.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
@@ -255,6 +256,10 @@ void NVPTXTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef PassName, ModulePassManager &PM,
          ArrayRef<PassBuilder::PipelineElement>) {
+        if (PassName == "desugar-variadics") {
+          PM.addPass(DesugarVariadicsPass());
+          return true;
+        }
         if (PassName == "nvptx-lower-ctor-dtor") {
           PM.addPass(NVPTXCtorDtorLoweringPass());
           return true;
@@ -380,6 +385,7 @@ void NVPTXPassConfig::addIRPasses() {
   }
 
   addPass(createAtomicExpandPass());
+  addPass(createDesugarVariadicsPass(true));
   addPass(createNVPTXCtorDtorLoweringLegacyPass());
 
   // === LSR and other generic IR passes ===

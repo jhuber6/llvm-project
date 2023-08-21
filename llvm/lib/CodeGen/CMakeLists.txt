@@ -62,6 +62,7 @@ add_llvm_component_library(LLVMCodeGen
   ComplexDeinterleavingPass.cpp
   CriticalAntiDepBreaker.cpp
   DeadMachineInstructionElim.cpp
+  DesugarVariadics.cpp
   DetectDeadLanes.cpp
   DFAPacketizer.cpp
   DwarfEHPrepare.cpp
