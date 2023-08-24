@@ -1,3 +1,33 @@
+add_entrypoint_object(
+  stdin
+  SRCS
+    stdin.cpp
+  HDRS
+    ../stdin.h
+  DEPENDS
+    libc.include.stdio
+)
+
+add_entrypoint_object(
+  stdout
+  SRCS
+    stdout.cpp
+  HDRS
+    ../stdout.h
+  DEPENDS
+    libc.include.stdio
+)
+
+add_entrypoint_object(
+  stderr
+  SRCS
+    stderr.cpp
+  HDRS
+    ../stderr.h
+  DEPENDS
+    libc.include.stdio
+)
+
 add_header_library(
   gpu_file
   HDRS
@@ -10,6 +40,24 @@ add_header_library(
     .stderr
 )
 
+add_header_library(
+  gpu_parser
+  HDRS
+    parser.h
+  DEPENDS
+    libc.src.__support.arg_list
+)
+
+add_header_library(
+  gpu_printf_impl
+  HDRS
+    print_impl.h
+  DEPENDS
+    libc.src.__support.arg_list
+    .parser
+    .gpu_file
+)
+
 add_entrypoint_object(
   feof
   SRCS
@@ -19,6 +67,9 @@ add_entrypoint_object(
   DEPENDS
     libc.include.stdio
     libc.src.__support.RPC.rpc_client
+    .stdin
+    .stdout
+    .stderr
 )
 
 add_entrypoint_object(
@@ -30,6 +81,9 @@ add_entrypoint_object(
   DEPENDS
     libc.include.stdio
     libc.src.__support.RPC.rpc_client
+    .stdin
+    .stdout
+    .stderr
 )
 
 add_entrypoint_object(
@@ -74,6 +128,9 @@ add_entrypoint_object(
   DEPENDS
     libc.include.stdio
     libc.src.__support.RPC.rpc_client
+    .stdin
+    .stdout
+    .stderr
 )
 
 add_entrypoint_object(
@@ -263,31 +320,23 @@ add_entrypoint_object(
 )
 
 add_entrypoint_object(
-  stdin
+  printf
   SRCS
-    stdin.cpp
+    printf.cpp
   HDRS
-    ../stdin.h
+    ../printf.h
   DEPENDS
     libc.include.stdio
 )
 
 add_entrypoint_object(
-  stdout
+  fprintf
   SRCS
-    stdout.cpp
+    fprintf.cpp
   HDRS
-    ../stdout.h
+    ../fprintf.h
   DEPENDS
     libc.include.stdio
-)
-
-add_entrypoint_object(
-  stderr
-  SRCS
-    stderr.cpp
-  HDRS
-    ../stderr.h
-  DEPENDS
-    libc.include.stdio
+    libc.src.__support.arg_list
+    libc.src.stdio.printf_core.parser
 )

@@ -185,6 +185,8 @@ add_libc_test(
     printf_test.cpp
   DEPENDS
     libc.src.stdio.printf
+    libc.src.stdio.stdout
+    libc.src.stdio.stderr
 )
 
 add_fp_unittest(

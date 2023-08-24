@@ -9,6 +9,7 @@
 #ifndef LLVM_LIBC_SRC___SUPPORT_ARG_LIST_H
 #define LLVM_LIBC_SRC___SUPPORT_ARG_LIST_H
 
+#include "src/__support/CPP/type_traits.h"
 #include "src/__support/common.h"
 
 #include <stdarg.h>
@@ -59,6 +60,35 @@ public:
 
   size_t read_count() const { return arg_counter; }
 };
+
+// Used for the GPU implementation of `printf`. This models a variadic list as a
+// simple array of pointers that are built manually by the implementation.
+class ArrayArgList {
+  size_t idx;
+  void **list;
+
+public:
+  LIBC_INLINE ArrayArgList(void **list) : idx(0), list(list) {}
+  LIBC_INLINE ArrayArgList(va_list) {}
+  LIBC_INLINE ArrayArgList(const ArrayArgList &other) {
+    idx = other.idx;
+    list = other.list;
+  }
+  LIBC_INLINE ~ArrayArgList() = default;
+
+  LIBC_INLINE ArrayArgList &operator=(const ArrayArgList &rhs) {
+    idx = rhs.idx;
+    list = rhs.list;
+    return *this;
+  }
+
+  template <class T> LIBC_INLINE T next_var() {
+    if constexpr (cpp::is_same_v<T, char *>)
+      return reinterpret_cast<T>(list[idx++]);
+    else
+      return *reinterpret_cast<T *>(list[idx++]);
+  }
+}; // namespace LIBC_NAMESPACE
 
 } // namespace internal
 } // namespace LIBC_NAMESPACE

@@ -30,6 +30,9 @@ if(NOT LLVM_LIBC_FULL_BUILD)
   list(APPEND use_system_file "COMPILE_OPTIONS" "-DLIBC_COPT_STDIO_USE_SYSTEM_FILE")
 endif()
 
+add_subdirectory(printf_core)
+add_subdirectory(scanf_core)
+
 add_entrypoint_object(
   flockfile
   SRCS
@@ -159,40 +162,6 @@ add_entrypoint_object(
     libc.src.stdio.printf_core.writer
 )
 
-list(APPEND printf_deps
-      libc.src.__support.arg_list
-      libc.src.stdio.printf_core.vfprintf_internal
-)
-
-if(LLVM_LIBC_FULL_BUILD)
-  list(APPEND printf_deps
-      libc.src.__support.File.file
-      libc.src.__support.File.platform_file
-      libc.src.__support.File.platform_stdout
-  )
-endif()
-
-add_entrypoint_object(
-  printf
-  SRCS
-    printf.cpp
-  HDRS
-    printf.h
-  DEPENDS
-    ${printf_deps}
-)
-
-add_entrypoint_object(
-  fprintf
-  SRCS
-    fprintf.cpp
-  HDRS
-    fprintf.h
-  DEPENDS
-    libc.src.__support.arg_list
-    libc.src.stdio.printf_core.vfprintf_internal
-)
-
 add_entrypoint_object(
   vsprintf
   SRCS
@@ -214,30 +183,6 @@ add_entrypoint_object(
     libc.src.stdio.printf_core.printf_main
     libc.src.stdio.printf_core.writer
 )
-
-add_entrypoint_object(
-  vprintf
-  SRCS
-    vprintf.cpp
-  HDRS
-    vprintf.h
-  DEPENDS
-    ${printf_deps}
-)
-
-add_entrypoint_object(
-  vfprintf
-  SRCS
-    vfprintf.cpp
-  HDRS
-    vfprintf.h
-  DEPENDS
-    libc.src.__support.arg_list
-    libc.src.stdio.printf_core.vfprintf_internal
-)
-
-add_subdirectory(printf_core)
-add_subdirectory(scanf_core)
 
 add_entrypoint_object(
   remove
@@ -278,3 +223,7 @@ add_stdio_entrypoint_object(ungetc)
 add_stdio_entrypoint_object(stdin)
 add_stdio_entrypoint_object(stdout)
 add_stdio_entrypoint_object(stderr)
+add_stdio_entrypoint_object(printf)
+add_stdio_entrypoint_object(fprintf)
+add_stdio_entrypoint_object(vprintf)
+add_stdio_entrypoint_object(vfprintf)

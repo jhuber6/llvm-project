@@ -1,4 +1,8 @@
-add_library(llvmlibc_rpc_server STATIC rpc_server.cpp)
+add_library(llvmlibc_rpc_server
+  STATIC
+  ${LIBC_SOURCE_DIR}/src/stdio/printf_core/writer.cpp
+  ${LIBC_SOURCE_DIR}/src/stdio/printf_core/converter.cpp
+  rpc_server.cpp)
 
 # Include the RPC implemenation from libc.
 target_include_directories(llvmlibc_rpc_server PRIVATE ${LIBC_SOURCE_DIR})
@@ -10,6 +14,11 @@ target_compile_options(llvmlibc_rpc_server PUBLIC
                        $<$<CXX_COMPILER_ID:GNU>:-Wno-attributes>)
 target_compile_definitions(llvmlibc_rpc_server PUBLIC
                            LIBC_NAMESPACE=${LIBC_NAMESPACE})
+
+target_compile_definitions(llvmlibc_rpc_server
+                           PRIVATE
+                           LIBC_COPT_PRINTF_DISABLE_WRITE_INT
+                           LIBC_COPT_PRINTF_DISABLE_INDEX_MODE)
 
 # Install the server and associated header.
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.h

@@ -8,6 +8,12 @@
 
 #include "rpc_server.h"
 
+#include "src/__support/arg_list.h"
+#include "src/stdio/gpu/parser.h"
+#include "src/stdio/printf_core/converter.h"
+#include "src/stdio/printf_core/parser.h"
+#include "src/stdio/printf_core/writer.h"
+
 #include "src/__support/RPC/rpc.h"
 #include "src/stdio/gpu/file.h"
 #include <atomic>
@@ -26,6 +32,106 @@ static_assert(sizeof(rpc_buffer_t) == sizeof(rpc::Buffer),
 
 static_assert(RPC_MAXIMUM_PORT_COUNT == rpc::MAX_PORT_COUNT,
               "Incorrect maximum port count");
+
+template <uint32_t lane_size>
+static void handle_printf(typename rpc::Server<lane_size>::Port &port) {
+  uint64_t total_sizes[lane_size] = {0};
+  uint64_t sizes[lane_size] = {0};
+
+  void *format[lane_size] = {nullptr};
+  FILE *files[lane_size] = {nullptr};
+
+  // Get the appropriate output stream to use.
+  if (port.get_opcode() == RPC_PRINTF_TO_STREAM)
+    port.recv([&](rpc::Buffer *buffer, uint32_t id) {
+      files[id] = reinterpret_cast<FILE *>(buffer->data[0]);
+    });
+  else if (port.get_opcode() == RPC_PRINTF_TO_STDOUT)
+    std::fill(files, files + lane_size, stdout);
+  else
+    std::fill(files, files + lane_size, stderr);
+
+  // Recieve the format string from the client.
+  port.recv_n(format, sizes, [&](uint64_t size) { return new char[size]; });
+
+  for (uint32_t lane = 0; lane < lane_size; ++lane)
+    total_sizes[lane] += rpc::align_up(sizes[lane], sizeof(uintptr_t));
+
+  // Parse the formatting string using the same parser the client uses. This
+  // tells us exactly how many packets we need to be recieving from the client.
+  uint32_t num_specifiers = 0;
+  for (uint32_t lane = 0; lane < lane_size; ++lane) {
+    if (!format[lane])
+      continue;
+
+    internal::MockArgList args;
+    uint32_t count = 0;
+    gpu::MicroParser<internal::MockArgList> parser(
+        reinterpret_cast<const char *>(format[lane]), args);
+    for (gpu::Specifier cur = parser.get_next_specifier(); !parser.end(cur);
+         cur = parser.get_next_specifier())
+      count++;
+    num_specifiers = std::max(num_specifiers, count);
+  }
+
+  // Recieve all the arguments from the client and allocate storage for them.
+  std::vector<void *> all_args[lane_size];
+  for (uint32_t i = 0; i < num_specifiers; ++i) {
+    void *args[lane_size] = {nullptr};
+    port.recv_n(args, sizes, [&](uint64_t size) { return new char[size]; });
+
+    for (uint32_t lane = 0; lane < lane_size; ++lane) {
+      if (sizes[lane] > 0)
+        all_args[lane].push_back(args[lane]);
+      total_sizes[lane] += rpc::align_up(sizes[lane], sizeof(uintptr_t));
+    }
+  }
+
+  int results[lane_size] = {0};
+  for (uint32_t lane = 0; lane < lane_size; ++lane) {
+    if (!format[lane])
+      continue;
+
+    // We assume that twice the input length will be enough to fit the string.
+    uint64_t buffer_size = std::max(256ul, 2 * total_sizes[lane]);
+
+    std::unique_ptr<char[]> buffer(new char[buffer_size]);
+    printf_core::WriteBuffer wb(buffer.get(), buffer_size);
+    printf_core::Writer writer(&wb);
+
+    internal::ArrayArgList args(all_args[lane].data());
+    printf_core::Parser<internal::ArrayArgList> parser(
+        reinterpret_cast<const char *>(format[lane]), args);
+
+    // Parse and print the format string using the arguments we copied from the
+    // client.
+    for (printf_core::FormatSection cur_section = parser.get_next_section();
+         !cur_section.raw_string.empty();
+         cur_section = parser.get_next_section()) {
+      if (cur_section.has_conv) {
+        convert(&writer, cur_section);
+      } else {
+        writer.write(cur_section.raw_string);
+      }
+    }
+    results[lane] =
+        fwrite(buffer.get(), 1, writer.get_chars_written(), files[lane]);
+    if (results[lane] != writer.get_chars_written())
+      results[lane] = -1;
+  }
+
+  port.send(
+      [&](rpc::Buffer *buffer, uint32_t id) { buffer->data[0] = results[id]; });
+
+  for (uint32_t lane = 0; lane < lane_size; ++lane) {
+    if (!format[lane])
+      continue;
+
+    delete[] reinterpret_cast<char *>(format[lane]);
+    for (void *ptr : all_args[lane])
+      delete[] reinterpret_cast<uintptr_t *>(ptr);
+  }
+}
 
 // The client needs to support different lane sizes for the SIMT model. Because
 // of this we need to select between the possible sizes that the client can use.
@@ -209,10 +315,14 @@ private:
       });
       break;
     }
-    case RPC_NOOP: {
+    case RPC_PRINTF_TO_STDOUT:
+    case RPC_PRINTF_TO_STDERR:
+    case RPC_PRINTF_TO_STREAM:
+      handle_printf<lane_size>(*port);
+      break;
+    case RPC_NOOP:
       port->recv([](rpc::Buffer *) {});
       break;
-    }
     default: {
       auto handler =
           callbacks.find(static_cast<rpc_opcode_t>(port->get_opcode()));

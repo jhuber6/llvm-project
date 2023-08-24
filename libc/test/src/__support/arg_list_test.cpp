@@ -114,10 +114,15 @@ long int check_struct_type(int first, ...) {
   return s.c + s.s + s.i + s.l + s.f + s.d + last;
 }
 
+// FIXME: The NVPTX backend doesn't handle by-val struct types correctly.
+#ifndef LIBC_TARGET_ARCH_IS_NVPTX
+
 TEST(LlvmLibcArgListTest, TestStructTypes) {
   S s{'\x1', 2, 3, 4l, 5.0f, 6.0};
   ASSERT_EQ(check_struct_type(0, s, 1), 22l);
 }
+
+#endif
 
 // Test vector extensions from clang.
 #if LIBC_HAS_ATTRIBUTE(ext_vector_type)
