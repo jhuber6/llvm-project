@@ -16,6 +16,12 @@
 namespace cpp = LIBC_NAMESPACE::cpp;
 
 TEST(LlvmLibcNanosleep, SmokeTest) {
+#if defined(LIBC_TARGET_ARCH_IS_NVPTX)
+  // NVPTX Architectures older than Volta do not support 'nanosleep'
+  if (__nvvm_reflect("__CUDA_ARCH") < 700)
+    return;
+#endif
+
   // TODO: When we have the code to read clocks, test that time has passed.
   using LIBC_NAMESPACE::testing::ErrnoSetterMatcher::Succeeds;
   LIBC_NAMESPACE::libc_errno = 0;
