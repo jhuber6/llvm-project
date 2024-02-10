@@ -17,18 +17,9 @@ namespace LIBC_NAMESPACE {
 // AMDGPU does not have a single set frequency. Different architectures and
 // cards can have vary values. Here we default to a few known values, but for
 // complete support the frequency needs to be read from the kernel driver.
-#if defined(__GFX10__) || defined(__GFX11__) || defined(__GFX12__) ||          \
-    defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__)
-// These architectures use a 100 MHz fixed frequency clock.
+// All architectures released after the GFX9 series use a 100 MHz fixed
+// frequency clock so we will default to that.
 constexpr uint64_t clock_freq = 100000000;
-#elif defined(__GFX9__)
-// These architectures use a 25 MHz fixed frequency clock expect for Vega 10
-// which is actually 27 Mhz. We default to 25 MHz in all cases anyway.
-constexpr uint64_t clock_freq = 25000000;
-#else
-// The frequency for these architecture is unknown. We simply default to zero.
-constexpr uint64_t clock_freq = 0;
-#endif
 
 // We provide an externally visible symbol such that the runtime can set
 // this to the correct value. If it is not set we try to default to the

@@ -22,14 +22,18 @@ LLVM_LIBC_FUNCTION(int, nanosleep,
   uint64_t nsecs = req->tv_nsec + req->tv_sec * TICKS_PER_NS;
 
   uint64_t start = gpu::fixed_frequency_clock();
-#if defined(LIBC_TARGET_ARCH_IS_NVPTX) && __CUDA_ARCH__ >= 700
+#if defined(LIBC_TARGET_ARCH_IS_NVPTX)
   uint64_t end = start + nsecs / (TICKS_PER_NS / GPU_CLOCKS_PER_SEC);
   uint64_t cur = gpu::fixed_frequency_clock();
   // The NVPTX architecture supports sleeping and guaruntees the actual time
   // slept will be somewhere between zero and twice the requested amount. Here
   // we will sleep again if we undershot the time.
   while (cur < end) {
-    __nvvm_nanosleep(static_cast<uint32_t>(nsecs));
+    // The NVPTX backend will replace this builtin with the SM's architecture.
+    if (__nvvm_reflect("__CUDA_ARCH") >= 700)
+      LIBC_INLINE_ASM("nanosleep.u32 %0;" ::"r"(nsecs));
+    else
+      return -1;
     cur = gpu::fixed_frequency_clock();
     nsecs -= nsecs > cur - start ? cur - start : 0;
   }
@@ -45,12 +49,7 @@ LLVM_LIBC_FUNCTION(int, nanosleep,
     cur = gpu::fixed_frequency_clock();
   }
 #else
-  // Sleeping is not supported.
-  if (rem) {
-    rem->tv_sec = req->tv_sec;
-    rem->tv_nsec = req->tv_nsec;
-  }
-  return -1;
+#error "Unsupported platform"
 #endif
   uint64_t stop = gpu::fixed_frequency_clock();
 
