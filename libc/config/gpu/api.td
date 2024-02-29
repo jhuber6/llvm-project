@@ -54,7 +54,7 @@ def StdlibAPI : PublicAPI<"stdlib.h"> {
 }
 
 def FenvAPI: PublicAPI<"fenv.h"> {
-  let Types = ["fenv_t"];
+  let Types = ["fenv_t", "fexcept_t"];
 }
 
 def StdIOAPI : PublicAPI<"stdio.h"> {
