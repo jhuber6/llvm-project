@@ -4268,8 +4268,6 @@ void SemaOpenMP::ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind,
         AlwaysInlineAttr::CreateImplicit(
             Context, {}, AlwaysInlineAttr::Keyword_forceinline));
     SmallVector<SemaOpenMP::CapturedParamNameType, 2> ParamsTarget;
-    if (getLangOpts().OpenMPIsTargetDevice)
-      ParamsTarget.push_back(std::make_pair(StringRef("dyn_ptr"), VoidPtrTy));
     ParamsTarget.push_back(
         std::make_pair(StringRef(), QualType())); // __context with shared vars;
     // Start a captured region for 'target' with no implicit parameters.
@@ -4317,13 +4315,20 @@ void SemaOpenMP::ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind,
         AlwaysInlineAttr::CreateImplicit(
             Context, {}, AlwaysInlineAttr::Keyword_forceinline));
     SmallVector<SemaOpenMP::CapturedParamNameType, 2> ParamsTarget;
-    if (getLangOpts().OpenMPIsTargetDevice)
-      ParamsTarget.push_back(std::make_pair(StringRef("dyn_ptr"), VoidPtrTy));
+    Decl *DynPtr = buildVarDecl(SemaRef, DSAStack->getConstructLoc(), VoidPtrTy,
+                                "dyn_ptr");
+    StmtResult InitStmt =
+        new (Context) DeclStmt(DeclGroupRef::Create(Context, &DynPtr, 1),
+                               SourceLocation(), SourceLocation());
+    SemaRef.AddInitializerToDecl(
+        DynPtr, SemaRef.ActOnIntegerConstant(DynPtr->getLocation(), 0).get(),
+        /*DirectInit*/ false);
     ParamsTarget.push_back(
         std::make_pair(StringRef(), QualType())); // __context with shared vars;
     SemaRef.ActOnCapturedRegionStart(DSAStack->getConstructLoc(), CurScope,
                                      CR_OpenMP, ParamsTarget,
                                      /*OpenMPCaptureLevel=*/1);
+    SemaRef.MarkVariableReferenced(DynPtr->getLocation(), cast<VarDecl>(DynPtr));
     break;
   }
   case OMPD_atomic:
