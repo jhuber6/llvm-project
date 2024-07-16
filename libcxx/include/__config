@@ -1223,6 +1223,11 @@ typedef __char32_t char32_t;
 #    define _LIBCPP_HAS_EXPLICIT_THIS_PARAMETER
 #  endif
 
+// Clang supports targeting GPU architectures.
+#  if (defined(__AMDGPU__) || defined(__NVPTX__)) && defined(_LIBCPP_COMPILER_CLANG_BASED)
+#    define _LIBCPP_TARGETING_GPU
+#endif
+
 #endif // __cplusplus
 
 #endif // _LIBCPP___CONFIG
