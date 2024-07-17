@@ -472,6 +472,15 @@ include(HandleLibcxxFlags)
 # 'config-ix' use them during feature checks. It also adds them to both
 # 'LIBCXX_COMPILE_FLAGS' and 'LIBCXX_LINK_FLAGS'
 
+# Targeting the GPU requires a clang compiler and several extra flags.
+if (${LLVM_RUNTIMES_TARGET} MATCHES "^amdgcn")
+  set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -nogpulib")
+  add_flags("-nogpulib" "-flto" "-fconvergent-functions" "-Xclang" "-mcode-object-version=none")
+elseif (${LLVM_RUNTIMES_TARGET} MATCHES "^nvptx")
+  set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -flto -c -Wno-unused-command-line-argument")
+  add_flags("-nogpulib" "-flto" "-fconvergent-functions" "--cuda-feature=+ptx63")
+endif()
+
 if (${CMAKE_SYSTEM_NAME} MATCHES "AIX")
   add_flags_if_supported("-mdefault-visibility-export-mapping=explicit")
   set(CMAKE_AIX_EXPORT_ALL_SYMBOLS OFF)
