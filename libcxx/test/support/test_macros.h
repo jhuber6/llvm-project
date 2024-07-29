@@ -291,13 +291,15 @@ struct is_same<T, T> { enum {value = 1}; };
 // when optimizations are enabled.
 template <class Tp>
 inline Tp const& DoNotOptimize(Tp const& value) {
-    asm volatile("" : : "r,m"(value) : "memory");
+    asm volatile("" : : "r"(value) : "memory");
     return value;
 }
 
 template <class Tp>
 inline Tp& DoNotOptimize(Tp& value) {
-#if defined(__clang__)
+#if defined(__AMDGPU__)
+  asm volatile("" : "+v"(value) : : "memory");
+#elif defined(__clang__)
   asm volatile("" : "+r,m"(value) : : "memory");
 #else
   asm volatile("" : "+m,r"(value) : : "memory");

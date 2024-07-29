@@ -89,6 +89,7 @@ def getStdFlag(cfg, std):
 
 
 def getDefaultStdValue(cfg):
+    return "c++23"
     viable = [s for s in reversed(_allStandards) if getStdFlag(cfg, s)]
 
     if not viable:
