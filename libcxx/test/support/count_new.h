@@ -461,7 +461,7 @@ inline void* alocate_aligned_impl(std::size_t size, std::align_val_t align) {
 #    ifdef USE_ALIGNED_ALLOC
   ret = _aligned_malloc(size, alignment);
 #    else
-  assert(posix_memalign(&ret, std::max(alignment, sizeof(void*)), size) != EINVAL);
+  ret = aligned_alloc(alignment, size);
 #    endif
   return ret;
 }
