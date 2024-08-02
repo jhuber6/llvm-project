@@ -1,0 +1,30 @@
+# Testing configuration for GPU target libc++.
+lit_config.load_config(config, '@CMAKE_CURRENT_BINARY_DIR@/cmake-bridge.cfg')
+
+if "amdgcn" in config.target_triple:
+  config.substitutions.append(('%{flags}', '-Wno-multi-gpu -flto -mcpu=native'))
+else:
+  config.substitutions.append(('%{flags}', '-Wno-multi-gpu -flto -march=native'))
+config.substitutions.append(('%{compile_flags}',
+    '-nogpulib -fno-builtin-printf -nogpuinc -nostdlibinc '
+    '-I %{include-dir} -I %{target-include-dir}/../../ '
+    '-I %{target-include-dir} -I %{libcxx-dir}/test/support'
+))
+config.substitutions.append(('%{link_flags}',
+    '-O1 -nostdinc++ -nostdlib++ -L %{lib-dir} -lc++ -lc++abi %{lib-dir}/crt1.o'
+))
+config.substitutions.append(('%{exec}',
+    '%{executor} --no-parallelism'
+))
+
+config.stdlib = 'llvm-libc++'
+
+import os, site
+site.addsitedir(os.path.join('@LIBCXX_SOURCE_DIR@', 'utils'))
+import libcxx.test.params, libcxx.test.config
+libcxx.test.config.configure(
+    libcxx.test.params.DEFAULT_PARAMETERS,
+    libcxx.test.features.DEFAULT_FEATURES,
+    config,
+    lit_config
+)

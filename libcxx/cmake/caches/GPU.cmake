@@ -44,6 +44,14 @@ foreach(target amdgcn-amd-amdhsa nvptx64-nvidia-cuda)
     set(RUNTIMES_${target}_CMAKE_REQUIRED_FLAGS
         "-flto -nodefaultlibs -c -Wno-unused-command-line-argument" CACHE STRING "")
   endif()
+
+  # Test configuration.
+  set(RUNTIMES_${target}_LIBCXX_TEST_CONFIG "gpu-libc++-shared.cfg.in" CACHE STRING "")
+  if(${target} MATCHES "^amdgcn")
+    set(RUNTIMES_${target}_LIBCXX_TEST_PARAMS "long_tests=False;executor=amdhsa-loader" CACHE STRING "")
+  else()
+    set(RUNTIMES_${target}_LIBCXX_TEST_PARAMS "long_tests=False;executor=nvptx-loader" CACHE STRING "")
+  endif()
 endforeach()
 
 # Handle default arguments when being built directly.
@@ -90,5 +98,13 @@ if(${CMAKE_CXX_COMPILER_TARGET} MATCHES "^amdgcn|^nvptx")
     set(LIBCXXABI_ADDITIONAL_COMPILE_FLAGS
         "-nogpulib;-flto;-fconvergent-functions;--cuda-feature=+ptx63" CACHE STRING "")
     set(CMAKE_REQUIRED_FLAGS "-flto;-c;-Wno-unused-command-line-argument" CACHE STRING "")
+  endif()
+
+  # Test configuration.
+  set(LIBCXX_TEST_CONFIG "gpu-libc++-shared.cfg.in" CACHE STRING "")
+  if(${CMAKE_CXX_COMPILER_TARGET} MATCHES "^amdgcn")
+    set(LIBCXX_TEST_PARAMS "executor=amdhsa-loader" CACHE STRING "")
+  else()
+    set(LIBCXX_TEST_PARAMS "executor=nvptx-loader" CACHE STRING "")
   endif()
 endif()
