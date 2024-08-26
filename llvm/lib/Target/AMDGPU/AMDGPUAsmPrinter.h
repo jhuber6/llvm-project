@@ -14,6 +14,7 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_AMDGPUASMPRINTER_H
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUASMPRINTER_H
 
+#include "AMDGPUMCResourceInfo.h"
 #include "SIProgramInfo.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 
@@ -24,6 +25,7 @@ struct AMDGPUResourceUsageAnalysis;
 class AMDGPUTargetStreamer;
 class MCCodeEmitter;
 class MCOperand;
+class MCResourceInfo;
 
 namespace AMDGPU {
 struct MCKernelDescriptor;
@@ -40,11 +42,18 @@ private:
 
   AMDGPUResourceUsageAnalysis *ResourceUsage;
 
+  MCResourceInfo RI;
+
   SIProgramInfo CurrentProgramInfo;
 
   std::unique_ptr<AMDGPU::HSAMD::MetadataStreamer> HSAMetadataStream;
 
   MCCodeEmitter *DumpCodeInstEmitter = nullptr;
+
+  // validateMCResourceInfo cannot recompute parts of the occupancy as it does
+  // for other metadata to validate (e.g., NumSGPRs) so a map is necessary if we
+  // really want to track and validate the occupancy.
+  DenseMap<const Function *, const MCExpr *> OccupancyValidateMap;
 
   uint64_t getFunctionCodeSize(const MachineFunction &MF) const;
 
@@ -60,11 +69,6 @@ private:
   void EmitPALMetadata(const MachineFunction &MF,
                        const SIProgramInfo &KernelInfo);
   void emitPALFunctionMetadata(const MachineFunction &MF);
-  void emitCommonFunctionComments(uint32_t NumVGPR,
-                                  std::optional<uint32_t> NumAGPR,
-                                  uint32_t TotalNumVGPR, uint32_t NumSGPR,
-                                  uint64_t ScratchSize, uint64_t CodeSize,
-                                  const AMDGPUMachineFunction *MFI);
   void emitCommonFunctionComments(const MCExpr *NumVGPR, const MCExpr *NumAGPR,
                                   const MCExpr *TotalNumVGPR,
                                   const MCExpr *NumSGPR,
@@ -83,6 +87,11 @@ private:
   void initTargetStreamer(Module &M);
 
   SmallString<128> getMCExprStr(const MCExpr *Value);
+
+  /// Attempts to replace the validation that is missed in getSIProgramInfo due
+  /// to MCExpr being unknown. Invoked during doFinalization such that the
+  /// MCResourceInfo symbols are known.
+  void validateMCResourceInfo(Function &F);
 
 public:
   explicit AMDGPUAsmPrinter(TargetMachine &TM,
