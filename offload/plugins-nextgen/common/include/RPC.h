@@ -44,6 +44,9 @@ public:
   /// Deinitialize the associated memory and resources.
   llvm::Error shutDown();
 
+  /// Initialize the worker thread.
+  llvm::Error startThread();
+
   /// Check if this device image is using an RPC server. This checks for the
   /// precense of an externally visible symbol in the device image that will
   /// be present whenever RPC code is called.
@@ -85,7 +88,9 @@ private:
     llvm::ArrayRef<std::atomic<uintptr_t>> Handles;
 
     /// Initialize the worker thread to run in the background.
-    ServerThread(std::atomic<uintptr_t> Handles[], size_t Length);
+    ServerThread(std::atomic<uintptr_t> Handles[], size_t Length)
+        : Running(true), NumUsers(0), CV(), Mutex(), Handles(Handles, Length) {}
+
     ~ServerThread() { assert(!Running && "Thread not shut down explicitly\n"); }
 
     /// Notify the worker thread that there is a user that needs it.
@@ -104,6 +109,9 @@ private:
 
     /// Destroy the worker thread and wait.
     void shutDown();
+
+    /// Initialize the worker thread.
+    void startThread();
 
     /// Run the server thread to continuously check the RPC interface for work
     /// to be done for the device.

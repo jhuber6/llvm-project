@@ -21,6 +21,12 @@ using namespace llvm;
 using namespace omp;
 using namespace target;
 
+void RPCServerTy::ServerThread::startThread() {
+#ifdef LIBOMPTARGET_RPC_SUPPORT
+  Worker = std::thread([this]() { run(); });
+#endif
+}
+
 void RPCServerTy::ServerThread::shutDown() {
 #ifdef LIBOMPTARGET_RPC_SUPPORT
   {
@@ -60,18 +66,17 @@ void RPCServerTy::ServerThread::run() {
 #endif
 }
 
-RPCServerTy::ServerThread::ServerThread(std::atomic<uintptr_t> Handles[],
-                                        size_t Length)
-    : Running(true), NumUsers(0), CV(), Mutex(), Handles(Handles, Length) {
-#ifdef LIBOMPTARGET_RPC_SUPPORT
-  Worker = std::thread([this]() { run(); });
-#endif
-}
-
 RPCServerTy::RPCServerTy(plugin::GenericPluginTy &Plugin)
     : Handles(
           std::make_unique<std::atomic<uintptr_t>[]>(Plugin.getNumDevices())),
       Thread(new ServerThread(Handles.get(), Plugin.getNumDevices())) {}
+
+llvm::Error RPCServerTy::startThread() {
+#ifdef LIBOMPTARGET_RPC_SUPPORT
+  Thread->startThread();
+#endif
+  return Error::success();
+}
 
 llvm::Error RPCServerTy::shutDown() {
 #ifdef LIBOMPTARGET_RPC_SUPPORT
