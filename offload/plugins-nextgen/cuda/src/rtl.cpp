@@ -630,8 +630,6 @@ struct CUDADeviceTy : public GenericDeviceTy {
   Error synchronizeImpl(__tgt_async_info &AsyncInfo) override {
     CUstream Stream = reinterpret_cast<CUstream>(AsyncInfo.Queue);
     CUresult Res;
-    // If we have an RPC server running on this device we will continuously
-    // query it for work rather than blocking.
     Res = cuStreamSynchronize(Stream);
 
     // Once the stream is synchronized, return it to stream pool and reset
@@ -1287,13 +1285,13 @@ Error CUDAKernelTy::launchImpl(GenericDeviceTy &GenericDevice,
 
   // Register a callback to indicate when the kernel is complete.
   if (GenericDevice.getRPCServer())
-    cuStreamAddCallback(
+    cuLaunchHostFunc(
         Stream,
-        [](CUstream Stream, CUresult Status, void *Data) {
+        [](void *Data) {
           GenericPluginTy &Plugin = *reinterpret_cast<GenericPluginTy *>(Data);
           Plugin.getRPCServer().Thread->finish();
         },
-        &GenericDevice.Plugin, /*flags=*/0);
+        &GenericDevice.Plugin);
 
   return Plugin::check(Res, "Error in cuLaunchKernel for '%s': %s", getName());
 }
