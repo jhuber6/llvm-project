@@ -25,7 +25,7 @@
 
 using namespace llvm;
 using namespace llvm::sys;
-using namespace llvm::omp::target::debug;
+using namespace llvm::offload::debug;
 
 PluginManager *PM = nullptr;
 
@@ -659,16 +659,16 @@ Expected<DeviceTy &> PluginManager::getDevice(uint32_t DeviceNo) {
 
 #include "OmptProfiler.h"
 
-std::unique_ptr<llvm::omp::target::plugin::GenericProfilerTy>
+std::unique_ptr<llvm::offload::plugin::GenericProfilerTy>
 getProfilerToAttach() {
-  return std::make_unique<llvm::omp::target::ompt::OmptProfilerTy>();
+  return std::make_unique<llvm::offload::ompt::OmptProfilerTy>();
 }
 
 #else
 
-std::unique_ptr<llvm::omp::target::plugin::GenericProfilerTy>
+std::unique_ptr<llvm::offload::plugin::GenericProfilerTy>
 getProfilerToAttach() {
-  return std::make_unique<llvm::omp::target::plugin::GenericProfilerTy>();
+  return std::make_unique<llvm::offload::plugin::GenericProfilerTy>();
 }
 
 #endif
