@@ -21,7 +21,7 @@
 #include <cstdlib>
 #include <limits>
 
-using namespace llvm::offload::debug;
+using namespace llvm::omp::target::debug;
 
 // When set to true, helper threads terminate their work
 static bool DoneTracing{false};

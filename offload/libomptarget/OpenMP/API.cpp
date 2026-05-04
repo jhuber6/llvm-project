@@ -50,7 +50,7 @@ EXTERN void ompx_dump_mapping_tables() {
 #ifdef OMPT_SUPPORT
 using namespace llvm::offload::ompt;
 #endif
-using namespace llvm::offload::debug;
+using namespace llvm::omp::target::debug;
 
 using GenericDeviceTy = llvm::offload::plugin::GenericDeviceTy;
 
