@@ -80,6 +80,8 @@ typedef enum hsa_amd_agent_info_s {
   HSA_AMD_AGENT_INFO_COOPERATIVE_QUEUES = 0xA010,
   HSA_AMD_AGENT_INFO_UUID = 0xA011,
   HSA_AMD_AGENT_INFO_TIMESTAMP_FREQUENCY = 0xA016,
+  HSA_AMD_AGENT_INFO_NUM_SDMA_ENG = 0xA10A,
+  HSA_AMD_AGENT_INFO_NUM_SDMA_XGMI_ENG = 0xA10B,
   HSA_AMD_AGENT_INFO_MEMORY_PROPERTIES = 0xA114,
 } hsa_amd_agent_info_t;
 
@@ -199,12 +201,22 @@ typedef struct hsa_amd_profiling_dispatch_time_s {
   uint64_t end;
 } hsa_amd_profiling_dispatch_time_t;
 
+typedef struct hsa_amd_profiling_async_copy_time_s {
+  uint64_t start;
+  uint64_t end;
+} hsa_amd_profiling_async_copy_time_t;
+
 hsa_status_t
 hsa_amd_profiling_get_dispatch_time(hsa_agent_t agent, hsa_signal_t signal,
                                     hsa_amd_profiling_dispatch_time_t *time);
 
 hsa_status_t hsa_amd_profiling_set_profiler_enabled(hsa_queue_t *queue,
                                                     int enable);
+
+hsa_status_t hsa_amd_profiling_async_copy_enable(bool enable);
+
+hsa_status_t hsa_amd_profiling_get_async_copy_time(
+    hsa_signal_t signal, hsa_amd_profiling_async_copy_time_t *time);
 
 hsa_status_t hsa_amd_vmem_address_reserve(void **va, size_t size,
                                           uint64_t address, uint64_t flags);
@@ -228,6 +240,24 @@ hsa_status_t hsa_amd_vmem_unmap(void *va, size_t size);
 hsa_status_t hsa_amd_vmem_set_access(void *va, size_t size,
                                      const hsa_amd_memory_access_desc_t *desc,
                                      size_t desc_cnt);
+
+typedef enum {
+  HSA_AMD_SVM_GLOBAL_FLAG_COARSE_GRAINED = 1,
+} hsa_amd_svm_model_t;
+
+typedef enum hsa_amd_svm_attribute_s {
+  HSA_AMD_SVM_ATTRIB_GLOBAL_FLAG = 0,
+  HSA_AMD_SVM_ATTRIB_AGENT_ACCESSIBLE_IN_PLACE = 0x201,
+} hsa_amd_svm_attribute_t;
+
+typedef struct {
+  uint64_t attribute;
+  uint64_t value;
+} hsa_amd_svm_attribute_pair_t;
+
+hsa_status_t hsa_amd_svm_attributes_set(void *ptr, size_t size,
+                                        hsa_amd_svm_attribute_pair_t *attribute_list,
+                                        size_t attribute_count);
 
 #ifdef __cplusplus
 }
