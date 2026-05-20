@@ -3,39 +3,14 @@ set(common_dir ${CMAKE_CURRENT_SOURCE_DIR}/common)
 set(common_bin_dir ${CMAKE_CURRENT_BINARY_DIR}/common)
 add_subdirectory(common)
 function(add_target_library target_name lib_name)
-  add_llvm_library(${target_name} STATIC
-    LINK_COMPONENTS
+  add_library(${target_name} STATIC)
+
+  llvm_map_components_to_libnames(llvm_libs
     ${LLVM_TARGETS_TO_BUILD}
-      AggressiveInstCombine
-      Analysis
-      BinaryFormat
-      BitReader
-      BitWriter
-      CodeGen
-      Core
-      Extensions
-      FrontendOffloading
-      InstCombine
-      Instrumentation
-      IPO
-      IRReader
-      Linker
-      MC
-      Object
-      Passes
-      ProfileData
-      Remarks
-      ScalarOpts
-      Support
-      Target
-      TargetParser
-      TransformUtils
-      Vectorize
-
-    NO_INSTALL_RPATH
-    BUILDTREE_ONLY
-  )
-
+    AggressiveInstCombine Analysis BinaryFormat BitReader BitWriter CodeGen
+    Core Extensions FrontendOffloading InstCombine Instrumentation IPO IRReader
+    Linker MC Object Passes ProfileData Remarks ScalarOpts Support Target
+    TargetParser TransformUtils Vectorize)
   llvm_update_compile_flags(${target_name})
   target_include_directories(${target_name} PUBLIC ${common_dir}/include
                              ${CMAKE_INSTALL_PREFIX}/include/offload
@@ -45,7 +20,7 @@ function(add_target_library target_name lib_name)
   endif()
 
   target_link_libraries(${target_name} PRIVATE
-                        PluginCommon ${llvm_libs} ${OFFLOAD_PTHREAD_LIB})
+                        PluginCommon ${OFFLOAD_PTHREAD_LIB} ${llvm_libs})
 
   target_compile_definitions(${target_name} PRIVATE TARGET_NAME=${lib_name})
   target_compile_definitions(${target_name} PRIVATE
