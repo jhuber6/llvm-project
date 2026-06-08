@@ -781,12 +781,18 @@ Tool *AMDGPUToolChain::buildLinker() const {
 
 // Common function to check and add ASan library paths.
 void AMDGPUToolChain::checkAndAddAMDGPUSanLibPaths(const ArgList &Args) {
-  // For OpenMP: when ASan is enabled, prepend the OpenMP ASan library path so
-  // the linker finds ASan-instrumented libraries.
+  // For OpenMP: when ASan is enabled, add the OpenMP ASan library path so the
+  // linker finds ASan-instrumented libraries.
   if (getSanitizerArgs(Args).needsAsanRt()) {
     StringRef OmpASanPath = RocmInstallation->getOpenMPASanRTLPath();
-    if (!OmpASanPath.empty() && getVFS().exists(OmpASanPath))
-      getFilePaths().insert(getFilePaths().begin(), OmpASanPath.str());
+    if (!OmpASanPath.empty() && getVFS().exists(OmpASanPath)) {
+      bool HasMultilibVariant = llvm::any_of(
+          SelectedMultilibs, [](const Multilib &M) { return !M.isDefault(); });
+      if (HasMultilibVariant)
+        getFilePaths().push_back(OmpASanPath.str());
+      else
+        getFilePaths().insert(getFilePaths().begin(), OmpASanPath.str());
+    }
   }
 }
 
