@@ -277,7 +277,8 @@ void Flang::addCodegenOptions(const ArgList &Args,
        options::OPT_fstack_repack_arrays, options::OPT_fno_stack_repack_arrays,
        options::OPT_ftime_report, options::OPT_ftime_report_EQ,
        options::OPT_funroll_loops, options::OPT_fno_unroll_loops,
-       options::OPT_fdefer_desc_map, options::OPT_fno_defer_desc_map});
+       options::OPT_fdefer_desc_map, options::OPT_fno_defer_desc_map,
+       options::OPT_relaxed_c_loc});
 
   const llvm::Triple &Triple = getToolChain().getEffectiveTriple();
   addSeparateSectionFlags(Triple, Args, CmdArgs);
@@ -711,8 +712,8 @@ void Flang::addOffloadOptions(Compilation &C, const InputInfoList &Inputs,
 
   // Tell the frontend when it is compiling for an offloading device, regardless
   // of offloading programming model.
-  if (IsHostOffloadingAction)
-    CmdArgs.push_back("-offload-device");
+  if (JA.getOffloadingDeviceKind() > Action::OFK_Host)
+    CmdArgs.push_back("-foffload-device");
 
   // Skips the primary input file, which is the input file that the compilation
   // proccess will be executed upon (e.g. the host bitcode file) and

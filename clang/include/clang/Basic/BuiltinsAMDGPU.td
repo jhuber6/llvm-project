@@ -281,6 +281,21 @@ def __builtin_amdgcn_struct_ptr_buffer_load_lds : AMDGPUBuiltin<"void(__amdgpu_b
 def __builtin_amdgcn_struct_ptr_buffer_load_async_lds : AMDGPUBuiltin<"void(__amdgpu_buffer_rsrc_t, void address_space<3> *, _Constant unsigned int, int, int, int, _Constant int, _Constant int)", [], "vmem-to-lds-load-insts">;
 
 //===----------------------------------------------------------------------===//
+// Global Available/Visible memory accesses.
+//===----------------------------------------------------------------------===//
+
+def __builtin_amdgcn_av_load_b128
+    : AMDGPUBuiltin<"_ExtVector<4, unsigned int>(_ExtVector<4, unsigned int> *, int)", [], "flat-global-insts"> {
+  let Documentation = [DocAVLoadB128];
+  let ArgNames = ["ptr", "scope"];
+}
+def __builtin_amdgcn_av_store_b128
+    : AMDGPUBuiltin<"void(_ExtVector<4, unsigned int> *, _ExtVector<4, unsigned int>, int)", [], "flat-global-insts"> {
+  let Documentation = [DocAVStoreB128];
+  let ArgNames = ["ptr", "data", "scope"];
+}
+
+//===----------------------------------------------------------------------===//
 // Async mark builtins.
 //===----------------------------------------------------------------------===//
 
@@ -960,8 +975,14 @@ def __builtin_amdgcn_global_store_async_from_lds_b128 : AMDGPUBuiltin<"void(_Vec
 def __builtin_amdgcn_ds_atomic_async_barrier_arrive_b64 : AMDGPUBuiltin<"void(long int address_space<3> *)", [Const], "gfx1250-insts">;
 def __builtin_amdgcn_ds_atomic_barrier_arrive_rtn_b64 : AMDGPUBuiltin<"long int(long int address_space<3> *, long int)", [Const], "gfx1250-insts">;
 
-def __builtin_amdgcn_tensor_load_to_lds : AMDGPUBuiltin<"void(_Vector<4, unsigned int>, _Vector<8, int>, _Vector<4, int>, _Vector<4, int>, _Vector<8, int>, _Constant int)", [Const], "gfx1250-insts">;
-def __builtin_amdgcn_tensor_store_from_lds : AMDGPUBuiltin<"void(_Vector<4, unsigned int>, _Vector<8, int>, _Vector<4, int>, _Vector<4, int>, _Vector<8, int>, _Constant int)", [Const], "gfx1250-insts">;
+def __builtin_amdgcn_tensor_load_to_lds : AMDGPUBuiltin<"void(_Vector<4, unsigned int>, _Vector<8, int>, _Vector<4, int>, _Vector<4, int>, _Vector<8, int>, _Constant int)", [Const], "gfx1250-insts"> {
+  let Documentation = [DocTensorLoadToLDS_GFX1250];
+  let ArgNames = ["D0", "D1", "D2", "D3", "D4", "cpol"];
+}
+def __builtin_amdgcn_tensor_store_from_lds : AMDGPUBuiltin<"void(_Vector<4, unsigned int>, _Vector<8, int>, _Vector<4, int>, _Vector<4, int>, _Vector<8, int>, _Constant int)", [Const], "gfx1250-insts"> {
+  let Documentation = [DocTensorStoreFromLDS_GFX1250];
+  let ArgNames = ["D0", "D1", "D2", "D3", "D4", "cpol"];
+}
 
 
 def __builtin_amdgcn_global_load_tr4_b64_v2i32 : AMDGPUBuiltin<"_Vector<2, int>(_Vector<2, int address_space<1> *>)", [Const], "transpose-load-f4f6-insts,wavefrontsize32">;

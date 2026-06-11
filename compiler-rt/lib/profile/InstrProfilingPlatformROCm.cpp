@@ -213,7 +213,6 @@ static int hipGetDevice(int *DeviceId) {
   return pHipGetDevice ? pHipGetDevice(DeviceId) : -1;
 }
 
-__attribute__((unused))
 static int hipSetDevice(int DeviceId) {
   ensureHipLoaded();
   return pHipSetDevice ? pHipSetDevice(DeviceId) : -1;
@@ -766,9 +765,8 @@ static int processShadowVariable(void *ShadowVar, int TUIndex,
                                  const char *Target) {
   void *DeviceSections = nullptr;
   if (hipGetSymbolAddress(&DeviceSections, ShadowVar) != 0) {
-    if (isVerboseMode())
-      PROF_NOTE("shadow variable %p not available on current device, "
-                "skipping\n", ShadowVar);
+    PROF_WARN("failed to get symbol address for shadow variable %p\n",
+              ShadowVar);
     return -1;
   }
   /* DeviceSections points at the per-TU sections struct itself. */
@@ -793,31 +791,37 @@ extern "C" int __llvm_profile_hip_collect_device_data(void) {
 
   int Ret = 0;
 
-  /* Shadow variables (static-linked kernels): collect from the active device.
-   * hipGetSymbolAddress can trigger lazy code-object compilation via comgr on
-   * devices that never launched a kernel; at atexit time comgr's internal
-   * state may be partially torn down, causing a segfault.  Restrict collection
-   * to the device that was current when the program finished. */
+  /* Shadow variables (static-linked kernels): drain from every device. */
   if (NumShadowVariables > 0) {
     int OrigDevice = -1;
     hipGetDevice(&OrigDevice);
-    if (OrigDevice < 0)
-      OrigDevice = 0;
 
-    const char *ArchName = getDeviceArchName(OrigDevice);
-    if (isVerboseMode())
-      PROF_NOTE("Collecting static profile data from device %d (%s)\n",
-                OrigDevice, ArchName);
-    for (int i = 0; i < NumShadowVariables; ++i) {
-      const char *Target = ArchName;
-      char TargetWithIdx[64];
-      if (NumShadowVariables > 1) {
-        snprintf(TargetWithIdx, sizeof(TargetWithIdx), "%s.%d", ArchName, i);
-        Target = TargetWithIdx;
+    for (int Dev = 0; Dev < NumDevices; ++Dev) {
+      if (hipSetDevice(Dev) != 0) {
+        if (isVerboseMode())
+          PROF_NOTE("Failed to set device %d, skipping\n", Dev);
+        continue;
       }
-      if (processShadowVariable(OffloadShadowVariables[i], i, Target) != 0)
-        Ret = -1;
+      const char *ArchName = getDeviceArchName(Dev);
+      if (isVerboseMode())
+        PROF_NOTE("Collecting static profile data from device %d (%s)\n", Dev,
+                  ArchName);
+      for (int i = 0; i < NumShadowVariables; ++i) {
+        /* RDC-mode multi-shadow drains need a distinct profraw per TU;
+         * single-TU programs keep the bare arch target. */
+        const char *Target = ArchName;
+        char TargetWithIdx[64];
+        if (NumShadowVariables > 1) {
+          snprintf(TargetWithIdx, sizeof(TargetWithIdx), "%s.%d", ArchName, i);
+          Target = TargetWithIdx;
+        }
+        if (processShadowVariable(OffloadShadowVariables[i], i, Target) != 0)
+          Ret = -1;
+      }
     }
+
+    if (OrigDevice >= 0)
+      hipSetDevice(OrigDevice);
   }
 
   /* Warn about unprocessed TUs; skip cleared slots (already drained). */

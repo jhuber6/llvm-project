@@ -11,6 +11,7 @@
 #include "clang/Config/config.h"
 #include "clang/Driver/CommonArgs.h"
 #include "clang/Driver/Compilation.h"
+#include "clang/Driver/Driver.h"
 #include "clang/Driver/InputInfo.h"
 #include "clang/Driver/SanitizerArgs.h"
 #include "clang/Options/Options.h"
@@ -249,7 +250,7 @@ RocmInstallationDetector::getInstallationPathCandidates() {
   // Deduce ROCm path by the real path of the invoked clang, resolving symbolic
   // link of clang itself.
   llvm::SmallString<256> RealClangPath;
-  llvm::sys::fs::real_path(D.getClangProgramPath(), RealClangPath);
+  llvm::sys::fs::real_path(D.getDriverProgramPath(), RealClangPath);
   auto ParentPath = llvm::sys::path::parent_path(RealClangPath);
   if (ParentPath != InstallDir)
     ROCmSearchDirs.emplace_back(DeduceROCmPath(ParentPath));
@@ -313,8 +314,7 @@ RocmInstallationDetector::getInstallationPathCandidates() {
 
 RocmInstallationDetector::RocmInstallationDetector(
     const Driver &D, const llvm::Triple &HostTriple,
-    const llvm::opt::ArgList &Args, bool DetectHIPRuntime,
-    bool DetectOpenMPRuntime)
+    const llvm::opt::ArgList &Args, bool DetectHIPRuntime)
     : D(D) {
   Verbose = Args.hasArg(options::OPT_v);
   RocmPathArg = Args.getLastArgValue(options::OPT_rocm_path_EQ);
@@ -368,25 +368,6 @@ RocmInstallationDetector::RocmInstallationDetector(
 
   if (DetectHIPRuntime)
     detectHIPRuntime();
-  if (DetectOpenMPRuntime)
-    detectOpenMPRuntime();
-}
-
-void RocmInstallationDetector::detectOpenMPRuntime() {
-  assert(OpenMPASanRTLPath.empty());
-  // Set OpenMP ASan library directory path for pre-instrumented device
-  // libraries (e.g., libompdevice.a). This path is used when linking with
-  // -fsanitize=address for OpenMP offloading.
-  OpenMPASanRTLPath = llvm::sys::path::parent_path(D.Dir);
-  llvm::sys::path::append(OpenMPASanRTLPath, "lib", "asan");
-  if (D.getVFS().exists(OpenMPASanRTLPath))
-    return;
-  // Fallback: Search ASan libs in the ROCm tree (e.g. /opt/rocm/llvm/lib/asan).
-  const auto &Candidates = getInstallationPathCandidates();
-  if (Candidates.empty())
-    return;
-  OpenMPASanRTLPath = Candidates.front().Path;
-  llvm::sys::path::append(OpenMPASanRTLPath, "lib", "llvm", "lib", "asan");
 }
 
 void RocmInstallationDetector::detectDeviceLibrary() {
@@ -770,30 +751,10 @@ AMDGPUToolChain::AMDGPUToolChain(const Driver &D, const llvm::Triple &Triple,
   // It is done here to avoid repeated warning or error messages for
   // each tool invocation.
   checkAMDGPUCodeObjectVersion(D, Args);
-  // When ASan is enabled, setup ASan library path configuration early so that
-  // the linker finds ASan-instrumented libraries.
-  checkAndAddAMDGPUSanLibPaths(Args);
 }
 
 Tool *AMDGPUToolChain::buildLinker() const {
   return new tools::amdgpu::Linker(*this);
-}
-
-// Common function to check and add ASan library paths.
-void AMDGPUToolChain::checkAndAddAMDGPUSanLibPaths(const ArgList &Args) {
-  // For OpenMP: when ASan is enabled, add the OpenMP ASan library path so the
-  // linker finds ASan-instrumented libraries.
-  if (getSanitizerArgs(Args).needsAsanRt()) {
-    StringRef OmpASanPath = RocmInstallation->getOpenMPASanRTLPath();
-    if (!OmpASanPath.empty() && getVFS().exists(OmpASanPath)) {
-      bool HasMultilibVariant = llvm::any_of(
-          SelectedMultilibs, [](const Multilib &M) { return !M.isDefault(); });
-      if (HasMultilibVariant)
-        getFilePaths().push_back(OmpASanPath.str());
-      else
-        getFilePaths().insert(getFilePaths().begin(), OmpASanPath.str());
-    }
-  }
 }
 
 DerivedArgList *
@@ -932,7 +893,7 @@ void AMDGPUToolChain::addClangTargetOptions(
   // TODO: remove the SPIR-V bypass once it can encode (hidden) visibility.
   if (!DriverArgs.hasArg(options::OPT_fvisibility_EQ,
                          options::OPT_fvisibility_ms_compat) &&
-      !getEffectiveTriple().isSPIRV()) {
+      !getEffectiveTriple().isSPIRV() && !getDriver().IsFlangMode()) {
     CC1Args.push_back("-fvisibility=hidden");
     CC1Args.push_back("-fapply-global-visibility-to-externs");
   }
@@ -992,6 +953,9 @@ AMDGPUToolChain::getGPUArch(const llvm::opt::ArgList &DriverArgs) const {
 AMDGPUToolChain::ParsedTargetIDType
 AMDGPUToolChain::getParsedTargetID(const llvm::opt::ArgList &DriverArgs) const {
   StringRef TargetID = DriverArgs.getLastArgValue(options::OPT_mcpu_EQ);
+  if (TargetID.empty())
+    TargetID = DriverArgs.getLastArgValue(options::OPT_march_EQ);
+
   if (TargetID.empty())
     return {std::nullopt, std::nullopt, std::nullopt};
 
@@ -1064,15 +1028,14 @@ void ROCMToolChain::addClangTargetOptions(
   if (TT.getEnvironment() == llvm::Triple::LLVM)
     return;
 
-  // Get the device name and canonicalize it
-  const StringRef GpuArch = getGPUArch(DriverArgs);
-  auto Kind = llvm::AMDGPU::parseArchAMDGCN(GpuArch);
-  const StringRef CanonArch = llvm::AMDGPU::getArchNameAMDGCN(Kind);
-  StringRef LibDeviceFile = RocmInstallation->getLibDeviceFile(CanonArch);
+  AMDGPUToolChain::ParsedTargetIDType TargetID = getParsedTargetID(DriverArgs);
+  StringRef GpuArch =
+      TargetID.OptionalGPUArch ? *TargetID.OptionalGPUArch : StringRef();
+
+  StringRef LibDeviceFile = RocmInstallation->getLibDeviceFile(GpuArch);
   auto ABIVer = DeviceLibABIVersion::fromCodeObjectVersion(
       getAMDGPUCodeObjectVersion(getDriver(), DriverArgs));
-  if (!RocmInstallation->checkCommonBitcodeLibs(CanonArch, LibDeviceFile,
-                                                ABIVer))
+  if (!RocmInstallation->checkCommonBitcodeLibs(GpuArch, LibDeviceFile, ABIVer))
     return;
 
   // Add the OpenCL specific bitcode library.
@@ -1082,7 +1045,9 @@ void ROCMToolChain::addClangTargetOptions(
   // Add the generic set of libraries.
   BCLibs.append(RocmInstallation->getCommonBitcodeLibs(
       DriverArgs, LibDeviceFile, GpuArch, DeviceOffloadingKind,
-      getSanitizerArgs(DriverArgs).needsAsanRt()));
+      getSanitizerArgs(DriverArgs, TargetID.OptionalTargetID.value_or(""),
+                       DeviceOffloadingKind)
+          .needsAsanRt()));
 
   for (auto [BCFile, Internalize] : BCLibs) {
     if (Internalize)
@@ -1134,17 +1099,16 @@ RocmInstallationDetector::getCommonBitcodeLibs(
       BCLibs.emplace_back(BCLib);
     }
   };
+  auto AddSanBCLibs = [&]() {
+    if (Pref.GPUSan)
+      AddBCLib(getAsanRTLPath(), false);
+  };
 
-  // For OpenMP, openmp-devicertl(libompdevice.a) already contains ASan GPU
-  // runtime and Ockl functions (via POST_BUILD). Don't add it again at driver
-  // level to avoid duplicates as most of the symbols have USED attribute and
-  // duplicates entries in llvm.compiler.used & llvm.used makes their
-  // duplicate definitions persist even with internalization enabled
-  if (Pref.GPUSan && !Pref.IsOpenMP)
-    // Add Gpu Sanitizer RTL bitcode lib required for AMDGPU Sanitizer
-    AddBCLib(getAsanRTLPath(),false);
+  AddSanBCLibs();
   AddBCLib(getOCMLPath());
   if (!Pref.IsOpenMP)
+    AddBCLib(getOCKLPath());
+  else if (Pref.GPUSan && Pref.IsOpenMP)
     AddBCLib(getOCKLPath());
   AddBCLib(getUnsafeMathPath(Pref.UnsafeMathOpt || Pref.FastRelaxedMath));
   AddBCLib(getFiniteOnlyPath(Pref.FiniteOnly || Pref.FastRelaxedMath));
@@ -1166,8 +1130,8 @@ bool AMDGPUToolChain::shouldSkipArgument(const llvm::opt::Arg *A) const {
 
 llvm::SmallVector<ToolChain::BitCodeLibraryInfo, 12>
 ROCMToolChain::getCommonDeviceLibNames(
-    const llvm::opt::ArgList &DriverArgs, llvm::StringRef GPUArch,
-    Action::OffloadKind DeviceOffloadingKind) const {
+    const llvm::opt::ArgList &DriverArgs, llvm::StringRef TargetID,
+    llvm::StringRef GPUArch, Action::OffloadKind DeviceOffloadingKind) const {
   auto Kind = llvm::AMDGPU::parseArchAMDGCN(GPUArch);
   const StringRef CanonArch = llvm::AMDGPU::getArchNameAMDGCN(Kind);
 
@@ -1180,46 +1144,51 @@ ROCMToolChain::getCommonDeviceLibNames(
 
   return RocmInstallation->getCommonBitcodeLibs(
       DriverArgs, LibDeviceFile, GPUArch, DeviceOffloadingKind,
-      getSanitizerArgs(DriverArgs).needsAsanRt());
+      getSanitizerArgs(DriverArgs, TargetID, DeviceOffloadingKind)
+          .needsAsanRt());
 }
 
-bool AMDGPUToolChain::shouldSkipSanitizeOption(
-    const ToolChain &TC, const llvm::opt::ArgList &DriverArgs,
-    StringRef TargetID, const llvm::opt::Arg *A) const {
-  auto &Diags = TC.getDriver().getDiags();
-  bool IsExplicitDevice =
-      A->getBaseArg().getOption().matches(options::OPT_Xarch_device);
+static bool isXnackAvailable(const llvm::Triple &TT, llvm::StringRef TargetID) {
+  // Arch-specific check - only report as supported if arch has xnack+
+  llvm::StringRef Processor = getProcessorFromTargetID(TT, TargetID);
+  auto ProcKind = TT.isAMDGCN() ? llvm::AMDGPU::parseArchAMDGCN(Processor)
+                                : llvm::AMDGPU::parseArchR600(Processor);
+  auto Features = TT.isAMDGCN() ? llvm::AMDGPU::getArchAttrAMDGCN(ProcKind)
+                                : llvm::AMDGPU::getArchAttrR600(ProcKind);
 
-  // Check 'xnack+' availability by default
-  llvm::StringRef Processor =
-      getProcessorFromTargetID(TC.getTriple(), TargetID);
-  auto ProcKind = TC.getTriple().isAMDGCN()
-                      ? llvm::AMDGPU::parseArchAMDGCN(Processor)
-                      : llvm::AMDGPU::parseArchR600(Processor);
-  auto Features = TC.getTriple().isAMDGCN()
-                      ? llvm::AMDGPU::getArchAttrAMDGCN(ProcKind)
-                      : llvm::AMDGPU::getArchAttrR600(ProcKind);
-  if (Features & llvm::AMDGPU::FEATURE_XNACK_ALWAYS)
-    return false;
-
-  // Look for the xnack feature in TargetID
-  llvm::StringMap<bool> FeatureMap;
-  auto OptionalGpuArch = parseTargetID(TC.getTriple(), TargetID, &FeatureMap);
-  assert(OptionalGpuArch && "Invalid Target ID");
-  (void)OptionalGpuArch;
-  auto Loc = FeatureMap.find("xnack");
-  if (Loc == FeatureMap.end() || !Loc->second) {
-    if (IsExplicitDevice) {
-      Diags.Report(
-          clang::diag::err_drv_unsupported_option_for_offload_arch_req_feature)
-          << A->getAsString(DriverArgs) << TargetID << "xnack+";
-    } else {
-      Diags.Report(
-          clang::diag::warn_drv_unsupported_option_for_offload_arch_req_feature)
-          << A->getAsString(DriverArgs) << TargetID << "xnack+";
-    }
+  // If processor has xnack always on, Address sanitizer is supported
+  bool XnackAvailable = (Features & llvm::AMDGPU::FEATURE_XNACK_ALWAYS);
+  if (XnackAvailable)
     return true;
-  }
 
-  return false;
+  // Otherwise, check if xnack+ is explicitly enabled in the target ID
+  llvm::StringMap<bool> FeatureMap;
+  auto OptionalGpuArch = parseTargetID(TT, TargetID, &FeatureMap);
+  if (!OptionalGpuArch)
+    return false;
+  auto Loc = FeatureMap.find("xnack");
+  return (Loc != FeatureMap.end() && Loc->second);
+}
+
+SanitizerMask AMDGPUToolChain::getSupportedSanitizers(
+    StringRef BoundArch, Action::OffloadKind DeviceOffloadKind) const {
+  SanitizerMask SupportedMask =
+      ToolChain::getSupportedSanitizers(BoundArch, DeviceOffloadKind);
+
+  // Address sanitizer is potentially supported, but depends on the exact target
+  // arch xnack support.
+  if (BoundArch.empty() || isXnackAvailable(getTriple(), BoundArch))
+    SupportedMask |= SanitizerKind::Address;
+
+  return SupportedMask;
+}
+
+StringRef AMDGPUToolChain::getSanitizerRequirement(SanitizerMask Kinds,
+                                                   StringRef BoundArch) const {
+  // Address sanitizer requires xnack+ feature
+  if ((Kinds & SanitizerKind::Address) && !BoundArch.empty() &&
+      !isXnackAvailable(getTriple(), BoundArch)) {
+    return "xnack+";
+  }
+  return "";
 }

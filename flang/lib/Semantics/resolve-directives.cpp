@@ -988,7 +988,8 @@ private:
       Symbol::Flag::OmpIsDevicePtr, Symbol::Flag::OmpHasDeviceAddr};
 
   Symbol::Flags privateDataSharingAttributeFlags{Symbol::Flag::OmpPrivate,
-      Symbol::Flag::OmpFirstPrivate, Symbol::Flag::OmpLastPrivate};
+      Symbol::Flag::OmpFirstPrivate, Symbol::Flag::OmpLastPrivate,
+      Symbol::Flag::OmpLinear};
 
   Symbol::Flags ompFlagsRequireNewSymbol{Symbol::Flag::OmpPrivate,
       Symbol::Flag::OmpLinear, Symbol::Flag::OmpFirstPrivate,
@@ -1953,6 +1954,8 @@ Symbol *AccAttributeVisitor::DeclareOrMarkOtherAccessEntity(
     if (GetContext().directive == llvm::acc::ACCD_declare) {
       object.set(Symbol::Flag::AccDeclare);
       object.set(accFlag);
+      if (IsAllocatableOrObjectPointer(&object))
+        object.set(Symbol::Flag::AccDeclareAction);
     }
   }
   return &object;
@@ -2928,14 +2931,6 @@ void OmpAttributeVisitor::ResolveOmpDesignator(
 
   const auto *name{parser::GetDesignatorNameIfDataRef(designator)};
   if (!name) {
-    // Array sections to be changed to substrings as needed
-    if (AnalyzeExpr(context_, designator)) {
-      if (std::holds_alternative<parser::Substring>(designator.u)) {
-        context_.Say(designator.source,
-            "Substrings are not allowed on OpenMP directives or clauses"_err_en_US);
-      }
-    }
-    // other checks, more TBD
     return;
   }
 
@@ -3261,6 +3256,8 @@ void OmpAttributeVisitor::CheckObjectIsPrivatizable(
     clauseName = "FIRSTPRIVATE";
   } else if (ompFlag == Symbol::Flag::OmpLastPrivate) {
     clauseName = "LASTPRIVATE";
+  } else if (ompFlag == Symbol::Flag::OmpLinear) {
+    clauseName = "LINEAR";
   }
 
   if (SymbolOrEquivalentIsInNamelist(symbol)) {
