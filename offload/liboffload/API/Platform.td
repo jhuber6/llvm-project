@@ -29,6 +29,7 @@ def ol_platform_backend_t : Enum {
     Etor<"AMDGPU", "The backend is AMDGPU">,
     Etor<"LEVEL_ZERO", "The backend is Level Zero">,
     Etor<"HOST", "The backend is the host">,
+    Etor<"KFD", "The backend is the experimental AMDGPU Linux KFD plugin">,
   ];
 }
 

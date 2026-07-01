@@ -49,6 +49,9 @@ void doWrite<ol_platform_backend_t>(std::ostream &S,
   case OL_PLATFORM_BACKEND_HOST:
     S << "HOST";
     break;
+  case OL_PLATFORM_BACKEND_KFD:
+    S << "KFD";
+    break;
   default:
     S << "<< INVALID >>";
     break;

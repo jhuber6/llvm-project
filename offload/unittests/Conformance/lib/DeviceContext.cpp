@@ -219,6 +219,7 @@ DeviceContext::loadBinary(llvm::StringRef Directory,
   llvm::StringRef Extension;
 
   switch (Backend) {
+  case OL_PLATFORM_BACKEND_KFD:
   case OL_PLATFORM_BACKEND_AMDGPU:
     Extension = ".amdgpu.bin";
     break;

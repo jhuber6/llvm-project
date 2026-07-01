@@ -160,8 +160,21 @@ if(WIN32)
   endforeach()
 else()
   set(LIBOMPTARGET_ALL_PLUGIN_TARGETS amdgpu cuda)
+
+  option(LIBOMPTARGET_ENABLE_KFD_PLUGIN
+      "Build the experimental KFD plugin (fetches and builds libkfd)" ON)
+  if(LIBOMPTARGET_ENABLE_KFD_PLUGIN)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+       NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS "21.0")
+      list(APPEND LIBOMPTARGET_ALL_PLUGIN_TARGETS kfd)
+    else()
+      message(WARNING "KFD plugin requires Clang >= 21 to build libkfd; "
+                      "disabling LIBOMPTARGET_ENABLE_KFD_PLUGIN")
+    endif()
+  endif()
+
   set(LIBOMPTARGET_PLUGINS_TO_BUILD "all" CACHE STRING
-      "Semicolon-separated list of plugins to use: cuda, amdgpu or \"all\".")
+      "Semicolon-separated list of plugins to use: cuda, amdgpu, kfd or \"all\".")
 
   if(LIBOMPTARGET_PLUGINS_TO_BUILD STREQUAL "all")
     set(LIBOMPTARGET_PLUGINS_TO_BUILD ${LIBOMPTARGET_ALL_PLUGIN_TARGETS})
@@ -182,6 +195,11 @@ if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(ppc64le)|(aarch64)$"
     message(STATUS "Not building CUDA plugin: only support CUDA in "
                    "Linux x86_64, ppc64le, or aarch64 hosts")
     list(REMOVE_ITEM LIBOMPTARGET_PLUGINS_TO_BUILD "cuda")
+  endif()
+  if("kfd" IN_LIST LIBOMPTARGET_PLUGINS_TO_BUILD)
+    message(STATUS "Not building KFD plugin: only supported on Linux x86_64, "
+                   "ppc64le, or aarch64 hosts")
+    list(REMOVE_ITEM LIBOMPTARGET_PLUGINS_TO_BUILD "kfd")
   endif()
 endif()
 if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD64)$" AND

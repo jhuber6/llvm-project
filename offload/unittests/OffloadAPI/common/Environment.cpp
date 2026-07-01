@@ -175,7 +175,8 @@ bool TestEnvironment::loadDeviceBinary(
   olGetPlatformInfo(Platform, OL_PLATFORM_INFO_BACKEND, sizeof(Backend),
                     &Backend);
   std::string FileExtension;
-  if (Backend == OL_PLATFORM_BACKEND_AMDGPU) {
+  if (Backend == OL_PLATFORM_BACKEND_AMDGPU ||
+      Backend == OL_PLATFORM_BACKEND_KFD) {
     FileExtension = ".amdgpu.bin";
   } else if (Backend == OL_PLATFORM_BACKEND_CUDA) {
     FileExtension = ".nvptx64.bin";

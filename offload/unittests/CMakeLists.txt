@@ -67,8 +67,10 @@ function(add_offload_test_device_code test_filename test_name)
     endif()
   endif()
 
-  # Try to build with support for AMDGPU devices.
-  if("amdgpu" IN_LIST LIBOMPTARGET_PLUGINS_TO_BUILD)
+  # Try to build with support for AMDGPU devices. The experimental KFD plugin
+  # also consumes AMDGPU device code, so build it whenever either is enabled.
+  if("amdgpu" IN_LIST LIBOMPTARGET_PLUGINS_TO_BUILD OR
+     "kfd" IN_LIST LIBOMPTARGET_PLUGINS_TO_BUILD)
     check_cxx_compiler_flag("--target=amdgcn-amd-amdhsa -mcpu=native" PLATFORM_HAS_AMDGPU)
 
     if(OFFLOAD_TESTS_FORCE_AMDGPU_ARCH)

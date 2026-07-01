@@ -262,6 +262,8 @@ template <typename HandleT> Error olDestroy(HandleT Handle) {
 ol_platform_backend_t pluginNameToBackend(StringRef Name) {
   if (Name == "amdgpu") {
     return OL_PLATFORM_BACKEND_AMDGPU;
+  } else if (Name == "kfd") {
+    return OL_PLATFORM_BACKEND_KFD;
   } else if (Name == "cuda") {
     return OL_PLATFORM_BACKEND_CUDA;
   } else if (Name == "host") {
