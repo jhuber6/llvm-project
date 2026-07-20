@@ -19,6 +19,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
+#include "MemoryAccessInstrumentation.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -37,7 +38,6 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -47,6 +47,7 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace llvm;
+using namespace llvm::memaccess;
 
 #define DEBUG_TYPE "tsan"
 
@@ -348,38 +349,10 @@ void ThreadSanitizer::initialize(Module &M, const TargetLibraryInfo &TLI) {
       IRB.getPtrTy(), IRB.getPtrTy(), IRB.getInt32Ty(), IntptrTy);
 }
 
-static bool isVtableAccess(Instruction *I) {
-  if (MDNode *Tag = I->getMetadata(LLVMContext::MD_tbaa))
-    return Tag->isTBAAVtableAccess();
-  return false;
-}
-
 // Do not instrument known races/"benign races" that come from compiler
 // instrumentation. The user has no way of suppressing them.
 static bool shouldInstrumentReadWriteFromAddress(const Module *M, Value *Addr) {
-  // Peel off GEPs and BitCasts.
-  // Note: This also peels AddrspaceCasts, so this should not be used when
-  // checking the address space below.
-  Value *PeeledAddr = Addr->stripInBoundsOffsets();
-
-  if (GlobalVariable *GV = dyn_cast<GlobalVariable>(PeeledAddr)) {
-    if (GV->hasSection()) {
-      StringRef SectionName = GV->getSection();
-      // Check if the global is in the PGO counters section.
-      auto OF = M->getTargetTriple().getObjectFormat();
-      if (SectionName.ends_with(
-              getInstrProfSectionName(IPSK_cnts, OF, /*AddSegmentInfo=*/false)))
-        return false;
-    }
-  }
-
-  // Do not instrument accesses from different address spaces; we cannot deal
-  // with them.
-  Type *PtrTy = cast<PointerType>(Addr->getType()->getScalarType());
-  if (PtrTy->getPointerAddressSpace() != 0)
-    return false;
-
-  return true;
+  return shouldInstrumentAddress(M, Addr, AddrSpaceRacePolicy::FlatOnly);
 }
 
 bool ThreadSanitizer::addrPointsToConstantData(Value *Addr) {
@@ -474,16 +447,6 @@ void ThreadSanitizer::chooseInstructionsToInstrument(
   Local.clear();
 }
 
-static bool isTsanAtomic(const Instruction *I) {
-  // TODO: Ask TTI whether synchronization scope is between threads.
-  auto SSID = getAtomicSyncScopeID(I);
-  if (!SSID)
-    return false;
-  if (isa<LoadInst>(I) || isa<StoreInst>(I))
-    return *SSID != SyncScope::SingleThread;
-  return true;
-}
-
 void ThreadSanitizer::InsertRuntimeIgnores(Function &F) {
   InstrumentationIRBuilder IRB(&F.getEntryBlock(),
                                F.getEntryBlock().getFirstNonPHIIt());
@@ -497,19 +460,7 @@ void ThreadSanitizer::InsertRuntimeIgnores(Function &F) {
 
 bool ThreadSanitizer::sanitizeFunction(Function &F,
                                        const TargetLibraryInfo &TLI) {
-  // This is required to prevent instrumenting call to __tsan_init from within
-  // the module constructor.
-  if (F.getName() == kTsanModuleCtorName)
-    return false;
-  // Naked functions can not have prologue/epilogue
-  // (__tsan_func_entry/__tsan_func_exit) generated, so don't instrument them at
-  // all.
-  if (F.hasFnAttribute(Attribute::Naked))
-    return false;
-
-  // __attribute__(disable_sanitizer_instrumentation) prevents all kinds of
-  // instrumentation.
-  if (F.hasFnAttribute(Attribute::DisableSanitizerInstrumentation))
+  if (skipInstrumentation(F, kTsanModuleCtorName))
     return false;
 
   initialize(*F.getParent(), TLI);
@@ -528,7 +479,7 @@ bool ThreadSanitizer::sanitizeFunction(Function &F,
       // Skip instructions inserted by another instrumentation.
       if (Inst.hasMetadata(LLVMContext::MD_nosanitize))
         continue;
-      if (isTsanAtomic(&Inst))
+      if (isAtomicMemoryAccess(&Inst))
         AtomicAccesses.push_back(&Inst);
       else if (isa<LoadInst>(Inst) || isa<StoreInst>(Inst))
         LocalLoadsAndStores.push_back(&Inst);
@@ -813,19 +764,8 @@ bool ThreadSanitizer::instrumentAtomic(Instruction *I, const DataLayout &DL) {
 
 int ThreadSanitizer::getMemoryAccessFuncIndex(Type *OrigTy, Value *Addr,
                                               const DataLayout &DL) {
-  assert(OrigTy->isSized());
-  if (OrigTy->isScalableTy()) {
-    // FIXME: support vscale.
-    return -1;
-  }
-  uint32_t TypeSize = DL.getTypeStoreSizeInBits(OrigTy);
-  if (TypeSize != 8  && TypeSize != 16 &&
-      TypeSize != 32 && TypeSize != 64 && TypeSize != 128) {
+  int Idx = getAccessSizeIndex(OrigTy, DL);
+  if (Idx < 0)
     NumAccessesWithBadSize++;
-    // Ignore all unusual sizes.
-    return -1;
-  }
-  size_t Idx = llvm::countr_zero(TypeSize / 8);
-  assert(Idx < kNumberOfAccessSizes);
   return Idx;
 }

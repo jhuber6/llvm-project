@@ -11,6 +11,7 @@ add_llvm_component_library(LLVMInstrumentation
   MemProfInstrumentation.cpp
   MemProfUse.cpp
   MemorySanitizer.cpp
+  MemoryAccessInstrumentation.cpp
   NumericalStabilitySanitizer.cpp
   IndirectCallPromotion.cpp
   InstrProfiling.cpp
@@ -25,6 +26,7 @@ add_llvm_component_library(LLVMInstrumentation
   SanitizerBinaryMetadata.cpp
   ValueProfileCollector.cpp
   ThreadSanitizer.cpp
+  ConcurrencySanitizer.cpp
   TypeSanitizer.cpp
   HWAddressSanitizer.cpp
   RealtimeSanitizer.cpp

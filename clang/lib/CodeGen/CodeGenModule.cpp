@@ -589,7 +589,9 @@ CodeGenModule::CodeGenModule(ASTContext &C,
     createHLSLRuntime();
 
   // Enable TBAA unless it's suppressed. TSan and TySan need TBAA even at O0.
-  if (LangOpts.Sanitize.hasOneOf(SanitizerKind::Thread | SanitizerKind::Type) ||
+  if (LangOpts.Sanitize.hasOneOf(SanitizerKind::Thread |
+                                 SanitizerKind::Concurrency |
+                                 SanitizerKind::Type) ||
       (!CodeGenOpts.RelaxedAliasing && CodeGenOpts.OptimizationLevel > 0))
     TBAA.reset(new CodeGenTBAA(Context, getTypes(), TheModule, CodeGenOpts,
                                getLangOpts()));

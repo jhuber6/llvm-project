@@ -23,6 +23,15 @@
 // RUN: not %clang --target=x86_64-linux-gnu -fsanitize=leak,thread -pie -fno-rtti %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANL-SANT
 // CHECK-SANL-SANT: '-fsanitize=leak' not allowed with '-fsanitize=thread'
 
+// RUN: not %clang --target=x86_64-linux-gnu -fsanitize=concurrency %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANC-X64
+// CHECK-SANC-X64: error: unsupported option '-fsanitize=concurrency' for target 'x86_64-unknown-linux-gnu'
+
+// RUN: %clang --target=amdgcn-amd-amdhsa -mcpu=gfx900 -nogpulib -fsanitize=concurrency %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANC-AMDGPU
+// CHECK-SANC-AMDGPU: "-fsanitize=concurrency"
+
+// RUN: not %clang --target=amdgcn-amd-amdhsa -mcpu=gfx900:xnack+ -nogpulib -fsanitize=concurrency,address %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANC-SANA
+// CHECK-SANC-SANA: '-fsanitize=concurrency' not allowed with '-fsanitize=address'
+
 // RUN: not %clang --target=x86_64-linux-gnu -fsanitize=leak,memory -pie -fno-rtti %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-SANL-SANM
 // CHECK-SANL-SANM: '-fsanitize=leak' not allowed with '-fsanitize=memory'
 
