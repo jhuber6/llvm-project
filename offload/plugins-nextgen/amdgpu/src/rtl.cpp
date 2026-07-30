@@ -15,13 +15,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <memory>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <sys/time.h>
 #include <system_error>
-#include <type_traits>
 #include <unistd.h>
 #include <unordered_map>
 #include <variant>
@@ -364,7 +363,6 @@ static Error getTargetTripleAndFeatures(hsa_agent_t Agent,
   });
   return Err;
 }
-
 } // namespace hsa_utils
 
 /// Utility class representing generic resource references to AMDGPU resources.
@@ -605,11 +603,13 @@ struct AMDGPUMemoryManagerTy : public DeviceAllocatorTy {
     if (OMPX_AMDMemoryMgrThreshold > sizeof(size_t) * CHAR_BIT - 1) {
       // if user input is too large, trim it down to the upper limit of size_t.
       OMPX_AMDMemoryMgrThreshold = sizeof(size_t) * CHAR_BIT - 1;
-      ODBG(ODT_Tool) << "User input for AMDGPUMemoryManager threshhold is too larget and was "
-                     << "trimmed to: " << OMPX_AMDMemoryMgrThreshold.get();
+      ODBG(ODT_Tool) << "User input for AMDGPUMemoryManager threshold is too "
+                     << "large and was trimmed to: "
+                     << OMPX_AMDMemoryMgrThreshold.get();
     }
     const size_t Threshold = 1UL << OMPX_AMDMemoryMgrThreshold;
-    ODBG(ODT_Tool) << "AMDGPUMemoryManager threshhold was set to: " <<  Threshold << " B";
+    ODBG(ODT_Tool) << "AMDGPUMemoryManager threshold was set to: " << Threshold
+                   << " B";
     this->MemoryManager = new MemoryManagerTy(*this, Threshold);
     this->MemoryPool = &MemoryPool;
     return Plugin::success();
@@ -720,9 +720,6 @@ struct AMDGPUDeviceImageTy : public DeviceImageTy {
     return It->second;
   }
 
-  /// Does device image contain Symbol
-  bool hasDeviceSymbol(GenericDeviceTy &Device, StringRef SymbolName) const;
-
   /// Return the maximum wavefront size across all known kernels in this image.
   uint32_t getMaxWavefrontSize() const {
     uint32_t Max = 0;
@@ -736,9 +733,6 @@ struct AMDGPUDeviceImageTy : public DeviceImageTy {
 private:
   /// The executable loaded on the agent.
   hsa_executable_t Executable;
-#if SANITIZER_AMDGPU
-  hsa_code_object_reader_t CodeObjectReader;
-#endif
   StringMap<offloading::amdgpu::AMDGPUKernelMetaData> KernelInfoMap;
   uint16_t ELFABIVersion;
 };
@@ -840,8 +834,6 @@ struct AMDGPUKernelTy : public GenericKernelTy {
       return KernelInfoOrErr.takeError();
     KernelInfo = std::move(*KernelInfoOrErr);
 
-    HasRPC = AMDImage.hasDeviceSymbol(Device, "__llvm_rpc_client");
-
     return Plugin::success();
   }
 
@@ -873,7 +865,6 @@ struct AMDGPUKernelTy : public GenericKernelTy {
   /// Get group and private segment kernel size.
   uint32_t getGroupSize() const { return GroupSize; }
   uint32_t getPrivateSize() const { return PrivateSize; }
-  uint16_t getConstWGSize() const { return ConstWGSize; }
 
   /// Get the HSA kernel object representing the kernel function.
   uint64_t getKernelObject() const { return KernelObject; }
@@ -914,15 +905,12 @@ private:
   uint32_t PrivateSize;
   bool DynamicStack;
 
-  /// Device init sets this to true if image has symbol indicating that RPC
-  /// service threads are used in this image.  Only used for trace display.
-  bool HasRPC;
-
   /// The size of implicit kernel arguments.
   uint32_t ImplicitArgsSize;
 
   /// Additional Info for the AMD GPU Kernel
-  offloading::amdgpu::AMDGPUKernelMetaData KernelInfo;  
+  offloading::amdgpu::AMDGPUKernelMetaData KernelInfo;
+
   /// CodeGen generate WGSize
   uint16_t ConstWGSize;
 
@@ -1907,7 +1895,6 @@ private:
       if (Callbacks.empty())
         return Plugin::success();
 
-      // Perform the action.
       assert(Callbacks.size() == ActionArgs.size() && "Size mismatch");
       for (auto [Callback, ActionArg] : llvm::zip(Callbacks, ActionArgs)) {
         // Perform the action.
@@ -3161,9 +3148,6 @@ struct AMDGenericDeviceTy {
 
     return Plugin::success();
   }
-  AMDGPUMemoryPoolTy *getCoarseGrainedMemoryPool() {
-    return CoarseGrainedMemoryPools[0];
-  }
 
   /// Retrieve and construct all memory pools from the device agent(s).
   virtual Error retrieveAllMemoryPools() = 0;
@@ -3358,39 +3342,21 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
           EnvarConfig.OMPX_XTeamReductionOccupancyBasedOpt;
     }
     // Print potential GPU envars.
-    ODBG(ODT_Tool)
-       << "Loaded per GPU envars:"
-       << "  OMPX_UseMultipleSdmaEngines=%d\n"
-       << EnvarConfig.OMPX_UseMultipleSdmaEngines
-       << "  OMPX_AdjustNumTeamsForXteamRedSmallBlockSize="
-       << EnvarConfig.OMPX_AdjustNumTeamsForXteamRedSmallBlockSize
-       << "  OMPX_XteamBlockSize="
-       << EnvarConfig.OMPX_XteamBlockSize
-       << "  OMPX_XTeamReductionOccupancyBasedOpt="
-       << EnvarConfig.OMPX_XTeamReductionOccupancyBasedOpt;
+    ODBG(ODT_Tool) << "Loaded per GPU envars:"
+                   << "  OMPX_UseMultipleSdmaEngines="
+                   << EnvarConfig.OMPX_UseMultipleSdmaEngines
+                   << "  OMPX_AdjustNumTeamsForXteamRedSmallBlockSize="
+                   << EnvarConfig.OMPX_AdjustNumTeamsForXteamRedSmallBlockSize
+                   << "  OMPX_XteamBlockSize="
+                   << EnvarConfig.OMPX_XteamBlockSize
+                   << "  OMPX_XTeamReductionOccupancyBasedOpt="
+                   << EnvarConfig.OMPX_XTeamReductionOccupancyBasedOpt;
   }
 
   ~AMDGPUDeviceTy() {}
 
   /// Return synchronous copy back status variable.
   bool syncCopyBack() const { return OMPX_SyncCopyBack; }
-
-  /// Returns the maximum of HSA queues to create
-  /// This reads a non-cached environment variable, don't call everywhere.
-  uint32_t getMaxNumHsaQueues() const {
-    // In case this environment variable is set: respect it and give it
-    // precendence
-    if (const char *GPUMaxHwQsEnv = getenv("GPU_MAX_HW_QUEUES")) {
-      uint32_t MaxGPUHwQueues = std::atoi(GPUMaxHwQsEnv);
-      if (MaxGPUHwQueues != OMPX_NumQueues)
-        ODBG(ODT_Tool) << "Different numbers of maximum HSA queues specified. Using "
-                       << MaxGPUHwQueues;
-
-      return MaxGPUHwQueues;
-    }
-    // Otherwise use the regular environment variable
-    return OMPX_NumQueues;
-  }
 
   virtual uint32_t getOMPXGenericSpmdTeamsPerCU() const override {
     return OMPX_GenericSpmdTeamsPerCU;
@@ -3612,7 +3578,7 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
     OMPX_NumQueues = std::max(1U, std::min(OMPX_NumQueues.get(), MaxQueues));
     OMPX_QueueSize = std::min(OMPX_QueueSize.get(), MaxQueueSize);
     ODBG(ODT_Tool) << "Using a maximum of " << OMPX_NumQueues.get()
-                   << " HSA queues\n";
+                   << " HSA queues";
 
     // Initialize stream pool.
     if (auto Err = AMDGPUStreamManager.init(OMPX_InitialNumStreams,
@@ -3658,17 +3624,8 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
     if (auto Err = checkIfGFX90a())
       return Err;
 
-    // detect if device is an MI300X.
-    if (auto Err = checkIfMI300x())
-      return Err;
-
     // detect special cases for MI200
     specialBehaviorHandling();
-
-    // detect ROCm-specific environment variables
-    // for map and zero-copy control
-    // TODO: put them back in constructor
-    //    readEnvVars();
 
     // Retrieve the size of the group memory.
     for (const auto *Pool : AllMemoryPools) {
@@ -4164,8 +4121,8 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
         return Err;
 
       if (auto Err = hsa_utils::asyncMemCopy(useMultipleSdmaEngines(), TgtPtr,
-                                         Agent, PinnedPtr, Agent, Size, 0,
-                                         nullptr, Signal.get()))
+                                             Agent, PinnedPtr, Agent, Size, 0,
+                                             nullptr, Signal.get()))
         return Err;
 
       if (auto Err = Signal.wait(getStreamBusyWaitMicroseconds()))
@@ -5012,11 +4969,6 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
     AMDGPUStreamManager.setHSAQueueProfiling(Enable);
   }
 
-  /// Get the address of pointer to the preallocated device memory pool.
-  void *getPreAllocatedDeviceMemoryPool() {
-    return PreAllocatedDeviceMemoryPool;
-  }
-
   /// Allocate and zero initialize a small memory pool from the coarse grained
   /// device memory of each device.
   Error preAllocateDeviceMemoryPool() {
@@ -5047,8 +4999,6 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
         if (Err)
           return Plugin::error(ErrorCode::UNKNOWN,
               "Zero initialization of preallocated device memory pool failed");
-
-        PreAllocatedDeviceMemoryPool = DevPtr;
 
         // Ensure slab is 2MB aligned
         uintptr_t BaseAddr = reinterpret_cast<uintptr_t>(DevPtr);
@@ -5084,8 +5034,6 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
   bool useSharedMemForDescriptor(int64_t Size) override {
     return Size <= OMPX_SharedDescriptorMaxSize;
   }
-
-  bool useStrictSanityChecks() const { return OMPX_StrictSanityChecks; }
 
 private:
   using AMDGPUEventRef = AMDGPUResourceRef<AMDGPUEventTy>;
@@ -5145,25 +5093,6 @@ private:
     return Plugin::success();
   }
 
-  Error checkIfMI300x() {
-    llvm::StringRef StrGfxName(ComputeUnitKind);
-
-    bool isMI300 = llvm::StringSwitch<bool>(StrGfxName)
-                       .Case("gfx942", true)
-                       .Default(false);
-    if (!isMI300)
-      return Plugin::success();
-
-    // Can be MI300A or MI300X
-    uint32_t ChipID = 0;
-    if (auto Err = getDeviceAttr(HSA_AMD_AGENT_INFO_CHIP_ID, ChipID))
-      return Err;
-
-    if (ChipID & 0x1)
-      IsEquippedWithMI300X = true;
-    return Plugin::success();
-  }
-
   bool checkIfCoarseGrainMemoryNearOrAbove64GB() {
     for (AMDGPUMemoryPoolTy *Pool : AllMemoryPools) {
       if (!Pool->isGlobal() || !Pool->isCoarseGrained())
@@ -5211,9 +5140,6 @@ private:
   }
 
   bool hasAPUDeviceImpl() override final { return IsAPU; }
-
-  // TODO: move the following function in private section.
-  bool hasMI300xDevice() { return IsEquippedWithMI300X; }
 
   /// Returns whether the device is a gfx90a.
   bool hasGfx90aDeviceImpl() override final { return IsEquippedWithGFX90A; }
@@ -5344,6 +5270,8 @@ private:
   /// Envar to force synchronous target regions. The default 0 uses an
   /// asynchronous implementation.
   UInt32Envar OMPX_ForceSyncRegions;
+
+  /// Environment variable to set the time to wait in active state before
   /// switching to blocked state. The default 2000000 busywaits for 2 seconds
   /// before going into a blocking HSA wait state. The unit for these variables
   /// are microseconds.
@@ -5440,9 +5368,6 @@ private:
   // on MI200 in unified_shared_memory programs only.
   AMDGPUMemTypeBitFieldTable *CoarseGrainMemoryTable = nullptr;
 
-  /// Pointer to the preallocated device memory pool
-  void *PreAllocatedDeviceMemoryPool;
-
   /// The current size of the stack that will be used in cases where it could
   /// not be statically determined.
   /// Default: 1024, in conformity to hipLimitStackSize.
@@ -5454,9 +5379,6 @@ private:
 
   /// Is the plugin associated with an APU?
   bool IsAPU = false;
-
-  // Is the device an MI300X?
-  bool IsEquippedWithMI300X = false;
 
   // Is the device an MI200?
   bool IsEquippedWithGFX90A = false;
@@ -5509,56 +5431,62 @@ private:
   }
 
   /// Representing all the runtime envar configs for a device.
+  /// Designated initializers below must stay in declaration order.
   struct DeviceEnvarConfigTy {
-    bool
-        OMPX_UseMultipleSdmaEngines; // LIBOMPTARGET_AMDGPU_USE_MULTIPLE_SDMA_ENGINES
-    bool
-        OMPX_AdjustNumTeamsForXteamRedSmallBlockSize;
-    int
-        OMPX_XteamBlockSize;
-    bool
-        OMPX_XTeamReductionOccupancyBasedOpt;
+    // LIBOMPTARGET_AMDGPU_USE_MULTIPLE_SDMA_ENGINES
+    bool OMPX_UseMultipleSdmaEngines;
+    bool OMPX_AdjustNumTeamsForXteamRedSmallBlockSize;
+    int OMPX_XteamBlockSize;
+    bool OMPX_XTeamReductionOccupancyBasedOpt;
   };
 
   static inline const std::unordered_map<std::string, DeviceEnvarConfigTy>
-      EnvarConfigs = {{"MI210", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI250X",{.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI250X/MI250",{
-                                 .OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI300A", {.OMPX_UseMultipleSdmaEngines = false,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
-                      {"MI300X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
-                      {"MI308X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 256,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI350X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
-                      {"MI355X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
+      EnvarConfigs = {{"MI210",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = true}},
+                      {"MI250X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = true}},
+                      {"MI250X/MI250",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = true}},
+                      {"MI300A",
+                       {.OMPX_UseMultipleSdmaEngines = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false}},
+                      {"MI300X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false}},
+                      {"MI308X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0,
+                        .OMPX_XteamBlockSize = 256,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = true}},
+                      {"MI350X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false}},
+                      {"MI355X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false}},
                       // Default config for unknown devices.
-                      {"DEFAULT", {.OMPX_UseMultipleSdmaEngines = false,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}}};
+                      {"DEFAULT",
+                       {.OMPX_UseMultipleSdmaEngines = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false}}};
 
   const DeviceEnvarConfigTy &getEnvarConfig() const {
     std::string DeviceMarketingName = getNormMarketingName();
@@ -5710,6 +5638,7 @@ Error AMDGPUDeviceImageTy::loadExecutable(const AMDGPUDeviceTy &Device) {
 Expected<hsa_executable_symbol_t>
 AMDGPUDeviceImageTy::findDeviceSymbol(GenericDeviceTy &Device,
                                       StringRef SymbolName) const {
+
   AMDGPUDeviceTy &AMDGPUDevice = static_cast<AMDGPUDeviceTy &>(Device);
   hsa_agent_t Agent = AMDGPUDevice.getAgent();
 
@@ -5722,16 +5651,6 @@ AMDGPUDeviceImageTy::findDeviceSymbol(GenericDeviceTy &Device,
     return std::move(Err);
 
   return Symbol;
-}
-
-bool AMDGPUDeviceImageTy::hasDeviceSymbol(GenericDeviceTy &Device,
-                                          StringRef SymbolName) const {
-  AMDGPUDeviceTy &AMDGPUDevice = static_cast<AMDGPUDeviceTy &>(Device);
-  hsa_agent_t Agent = AMDGPUDevice.getAgent();
-  hsa_executable_symbol_t Symbol;
-  hsa_status_t Status = hsa_executable_get_symbol_by_name(
-      Executable, SymbolName.data(), &Agent, &Symbol);
-  return (Status == HSA_STATUS_SUCCESS);
 }
 
 template <typename ResourceTy>
@@ -6027,9 +5946,8 @@ struct AMDGPUPluginTy final : public GenericPluginTy {
   Expected<bool> isELFCompatible(uint32_t DeviceId,
                                  StringRef Image) const override {
     // Get the associated architecture and flags from the ELF.
-    auto ElfOrErr =
-        ELF64LEObjectFile::create(MemoryBufferRef(Image, /*Identifier=*/""),
-                                  /*InitContent=*/false);
+    auto ElfOrErr = ELF64LEObjectFile::create(
+        MemoryBufferRef(Image, /*Identifier=*/""), /*InitContent=*/false);
     if (!ElfOrErr)
       return ElfOrErr.takeError();
     std::optional<StringRef> Processor = ElfOrErr->tryGetCPUName();
@@ -6272,6 +6190,7 @@ Error AMDGPUKernelTy::launchImpl(GenericDeviceTy &GenericDevice,
   }
 
   AMDGPUDeviceTy &AMDGPUDevice = static_cast<AMDGPUDeviceTy &>(GenericDevice);
+
   AMDGPUStreamTy *Stream = nullptr;
   if (auto Err = AMDGPUDevice.getStream(AsyncInfoWrapper, Stream))
     return Err;
@@ -6315,13 +6234,13 @@ Error AMDGPUKernelTy::launchImpl(GenericDeviceTy &GenericDevice,
   // Get required OMPT-related data
   auto ProfilerSpecificData = getOrNullProfilerSpecificData(AsyncInfoWrapper);
 
+  // HSA requires the group segment size to include both static and dynamic.
   uint32_t TotalBlockMemSize = getStaticBlockMemSize() + DynBlockMemSize;
 
   // Push the kernel launch into the stream.
   return Stream->pushKernelLaunch(*this, AllArgs, NumThreads, NumBlocks,
                                   TotalBlockMemSize, StackSize,
                                   ArgsMemoryManager, ProfilerSpecificData);
-  // Push the kernel launch into the stream.
 }
 
 void AMDGPUKernelTy::printAMDOneLineKernelTrace(GenericDeviceTy &GenericDevice,
@@ -6334,7 +6253,7 @@ void AMDGPUKernelTy::printAMDOneLineKernelTrace(GenericDeviceTy &GenericDevice,
   auto AGPRCount = (KernelInfo).AGPRCount;
   auto SGPRSpillCount = (KernelInfo).SGPRSpillCount;
   auto VGPRSpillCount = (KernelInfo).VGPRSpillCount;
-  // auto MaxFlatWorkgroupSize = (*KernelInfo).MaxFlatWorkgroupSize;
+  bool HasRPC = GenericDevice.getRPCServer() != nullptr;
 
   if (GenericDevice.enableKernelDurationTracing()) {
     uint32_t LaunchId = GenericDevice.getAndIncrementLaunchId();
@@ -6579,11 +6498,6 @@ getKernelStartAndEndTime(const ProfilingInfoTy *Args) {
           Status,
           "WARNING Could not retrieve kernel dispatch timestamps: %s")) {
     MESSAGE0(toString(std::move(Err)).data());
-
-    // XXX Is this important enough to keep it?
-    // auto *AMDGPUDevice = reinterpret_cast<AMDGPUDeviceTy *>(Args->Device);
-    // if (AMDGPUDevice->useStrictSanityChecks())
-    //   llvm_unreachable("User-requested hard stop on sanity check errors.");
   }
 
   uint64_t StartTime = TimeRec.start * Args->TicksToTime;
@@ -6602,11 +6516,6 @@ getCopyStartAndEndTime(const ProfilingInfoTy *Args) {
   if (auto Err = Plugin::check(
           Status, "WARNING Could not retrieve data-copy timestamps: %s")) {
     MESSAGE0(toString(std::move(Err)).data());
-
-    // XXX Is this important enough to keep it?
-    // auto *AMDGPUDevice = reinterpret_cast<AMDGPUDeviceTy *>(Args->Device);
-    // if (AMDGPUDevice->useStrictSanityChecks())
-    //   llvm_unreachable("User-requested hard stop on sanity check errors.");
   }
 
   uint64_t StartTime = TimeRec.start * Args->TicksToTime;
@@ -6748,15 +6657,6 @@ void setHSAQueueProfiling(void *Device, int Enable) {
 } // namespace llvm
 
 #ifdef OMPT_SUPPORT
-namespace llvm::omp::target::plugin {
-
-/// Enable/disable kernel profiling for the given device.
-void setOmptQueueProfile(void *Device, int Enable) {
-  setHSAQueueProfiling(Device, Enable);
-}
-
-} // namespace llvm::omp::target::plugin
-
 /// Enable/disable kernel profiling for the given device.
 void setGlobalOmptKernelProfile(void *Device, int Enable) {
   llvm::omp::target::plugin::setHSAQueueProfiling(Device, Enable);
