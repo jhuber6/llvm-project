@@ -766,7 +766,7 @@ if(COMPILER_RT_SUPPORTED_ARCH)
 endif()
 message(STATUS "Compiler-RT supported architectures: ${COMPILER_RT_SUPPORTED_ARCH}")
 
-set(ALL_SANITIZERS asan;rtsan;dfsan;msan;hwasan;tsan;tysan;safestack;cfi;scudo_standalone;ubsan_minimal;gwp_asan;nsan;asan_abi)
+set(ALL_SANITIZERS asan;rtsan;dfsan;msan;hwasan;tsan;tysan;safestack;cfi;scudo_standalone;ubsan_minimal;gwp_asan;nsan;asan_abi;gpuasan)
 set(COMPILER_RT_SANITIZERS_TO_BUILD all CACHE STRING
     "sanitizers to build if supported on the target (all;${ALL_SANITIZERS})")
 list_replace(COMPILER_RT_SANITIZERS_TO_BUILD all "${ALL_SANITIZERS}")
@@ -900,6 +900,22 @@ if (UBSAN_SUPPORTED_ARCH AND
   set(COMPILER_RT_HAS_UBSAN_MINIMAL TRUE)
 else()
   set(COMPILER_RT_HAS_UBSAN_MINIMAL FALSE)
+endif()
+
+# The GPU address sanitizer has a half on each side: the device runtime the
+# instrumentation calls into, and the host runtime that places allocations and
+# serves reports. Which one gets built is decided by who is configuring us.
+if (COMPILER_RT_GPU_BUILD AND UBSAN_SUPPORTED_ARCH)
+  set(GPUASAN_SUPPORTED_ARCH ${UBSAN_SUPPORTED_ARCH})
+  set(COMPILER_RT_HAS_GPUASAN TRUE)
+elseif (OS_NAME MATCHES "Linux" AND "x86_64" IN_LIST COMPILER_RT_SUPPORTED_ARCH)
+  # The host half talks to ROCr, which is Linux and x86_64 only. It links
+  # against nothing: every entry point is resolved at runtime, so building it
+  # does not require ROCm to be installed.
+  set(GPUASAN_SUPPORTED_ARCH x86_64)
+  set(COMPILER_RT_HAS_GPUASAN TRUE)
+else()
+  set(COMPILER_RT_HAS_GPUASAN FALSE)
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND SAFESTACK_SUPPORTED_ARCH AND

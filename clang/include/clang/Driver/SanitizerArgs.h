@@ -98,6 +98,9 @@ public:
 
   bool needsMemProfRt() const { return NeedsMemProfRt; }
   bool needsAsanRt() const { return Sanitizers.has(SanitizerKind::Address); }
+  bool needsGPUAsanRt() const {
+    return Sanitizers.has(SanitizerKind::GPUAddress);
+  }
   bool needsHwasanRt() const {
     return Sanitizers.has(SanitizerKind::HWAddress);
   }

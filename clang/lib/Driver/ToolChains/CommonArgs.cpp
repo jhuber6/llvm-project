@@ -1699,6 +1699,18 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
       SharedRuntimes.push_back("rtsan");
   }
 
+  // Two halves under one name: the device gets the static archive holding the
+  // reporting path the instrumentation calls, the host the shared library that
+  // places allocations and serves the reports.  Which one is wanted is decided
+  // by the triple being linked for, so an offload compile picks up both and a
+  // device-only compile picks up only the one that exists for it.
+  if (SanArgs.needsGPUAsanRt() && SanArgs.linkRuntimes()) {
+    if (TC.getTriple().isGPU())
+      StaticRuntimes.push_back("gpuasan");
+    else
+      SharedRuntimes.push_back("gpuasan");
+  }
+
   // The stats_client library is also statically linked into DSOs.
   if (SanArgs.needsStatsRt())
     StaticRuntimes.push_back("stats_client");

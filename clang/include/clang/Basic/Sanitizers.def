@@ -198,6 +198,11 @@ SANITIZER("scudo", Scudo)
 // AllocToken
 SANITIZER("alloc-token", AllocToken)
 
+// Slot-based memory safety for AMD GPUs.  Unlike "address" on AMDGPU this
+// needs no XNACK and no sanitized host, because the checks read a device-side
+// table the runtime maintains rather than a host-owned shadow map.
+SANITIZER("gpuasan", GPUAddress)
+
 // Magic group, containing all sanitizers. For example, "-fno-sanitize=all"
 // can be used to disable all the sanitizers.
 SANITIZER_GROUP("all", All, ~SanitizerMask())

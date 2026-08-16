@@ -7,6 +7,7 @@ add_llvm_component_library(LLVMInstrumentation
   CopyProf.cpp
   DataFlowSanitizer.cpp
   GCOVProfiling.cpp
+  GPUSanitizer.cpp
   BlockCoverageInference.cpp
   MemProfInstrumentation.cpp
   MemProfUse.cpp

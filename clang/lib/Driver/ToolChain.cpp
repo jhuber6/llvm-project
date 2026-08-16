@@ -1886,7 +1886,12 @@ ToolChain::getSupportedSanitizers(BoundArch BA,
                                   Action::OffloadKind DeviceOffloadKind) const {
   // Return sanitizers which don't require runtime support and are not
   // platform dependent.
-
+  //
+  // GPUAddress belongs here rather than in the GPU toolchains because a single
+  // -fsanitize= is forwarded to both the host and the device job of an offload
+  // compile; rejecting it on the host would make the flag unusable.  It also
+  // has no xnack requirement, since it checks a device-resident table instead
+  // of a host-owned shadow map.
   SanitizerMask Res =
       (SanitizerKind::Undefined & ~SanitizerKind::Vptr) |
       (SanitizerKind::CFI & ~SanitizerKind::CFIICall) |
@@ -1894,7 +1899,7 @@ ToolChain::getSupportedSanitizers(BoundArch BA,
       SanitizerKind::KCFI | SanitizerKind::UnsignedIntegerOverflow |
       SanitizerKind::UnsignedShiftBase | SanitizerKind::ImplicitConversion |
       SanitizerKind::Nullability | SanitizerKind::LocalBounds |
-      SanitizerKind::AllocToken;
+      SanitizerKind::AllocToken | SanitizerKind::GPUAddress;
   if (getTriple().getArch() == llvm::Triple::x86 ||
       getTriple().getArch() == llvm::Triple::x86_64 ||
       getTriple().getArch() == llvm::Triple::arm ||

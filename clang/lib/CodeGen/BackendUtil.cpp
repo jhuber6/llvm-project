@@ -73,6 +73,7 @@
 #include "llvm/Transforms/Instrumentation/BoundsChecking.h"
 #include "llvm/Transforms/Instrumentation/DataFlowSanitizer.h"
 #include "llvm/Transforms/Instrumentation/GCOVProfiler.h"
+#include "llvm/Transforms/Instrumentation/GPUSanitizer.h"
 #include "llvm/Transforms/Instrumentation/HWAddressSanitizer.h"
 #include "llvm/Transforms/Instrumentation/InstrProfiling.h"
 #include "llvm/Transforms/Instrumentation/KCFI.h"
@@ -780,6 +781,10 @@ static void addSanitizers(const Triple &TargetTriple,
     };
     HWASanPass(SanitizerKind::HWAddress, false);
     HWASanPass(SanitizerKind::KernelHWAddress, true);
+
+    if (LangOpts.Sanitize.has(SanitizerKind::GPUAddress))
+      MPM.addPass(GPUSanitizerPass(
+          CodeGenOpts.SanitizeRecover.has(SanitizerKind::GPUAddress)));
 
     if (LangOpts.Sanitize.has(SanitizerKind::DataFlow)) {
       MPM.addPass(DataFlowSanitizerPass(LangOpts.NoSanitizeFiles,

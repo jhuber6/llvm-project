@@ -9837,8 +9837,22 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
       return false;
     // Don't forward sanitizer arguments if the toolchain doesn't support it.
     // Without this check using it on the host would result in linker errors.
-    if (requiresUBSanRT(ID) && !ToolChainHasRT(TC, "ubsan_minimal"))
-      return false;
+    // Which runtime that is depends on what was asked for: the device link
+    // resolves each half of `gpuasan` through the ordinary compiler-rt lookup,
+    // so a toolchain that has one and not the other must be told about neither.
+    if (requiresUBSanRT(ID)) {
+      bool WantsGPUAsan = false, WantsUBSan = A->getNumValues() == 0;
+      for (StringRef Value : A->getValues()) {
+        if (Value == "gpuasan")
+          WantsGPUAsan = true;
+        else
+          WantsUBSan = true;
+      }
+      if (WantsGPUAsan && !ToolChainHasRT(TC, "gpuasan"))
+        return false;
+      if (WantsUBSan && !ToolChainHasRT(TC, "ubsan_minimal"))
+        return false;
+    }
     // Don't forward -mllvm to toolchains that don't support LLVM.
     return TC.HasNativeLLVMSupport() || ID != OPT_mllvm;
   };

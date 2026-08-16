@@ -110,6 +110,7 @@
 #include "llvm/Transforms/IPO/ExpandVariadics.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/IPO/Internalize.h"
+#include "llvm/Transforms/Instrumentation/GPUSanitizer.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/FlattenCFG.h"
@@ -707,6 +708,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPULateCodeGenPrepareLegacyPass(*PR);
   initializeAMDGPURemoveIncompatibleFunctionsLegacyPass(*PR);
   initializeAMDGPULowerModuleLDSLegacyPass(*PR);
+  initializeGPUSanitizerLDSLegacyPassPass(*PR);
   initializeAMDGPULowerBufferFatPointersPass(*PR);
   initializeAMDGPULowerIntrinsicsLegacyPass(*PR);
   initializeAMDGPUReserveWWMRegsLegacyPass(*PR);
@@ -1145,6 +1147,10 @@ void AMDGPUTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
           PM.addPass(AMDGPUSwLowerLDSPass());
         if (EnableLowerModuleLDS)
           PM.addPass(AMDGPULowerModuleLDSPass(*this));
+        // Needs the addresses lowering just chose.  Unconditional because
+        // whether a module is instrumented is a property of the module, set by
+        // the pass that clang ran before this one.
+        PM.addPass(GPUSanitizerLDSPass());
         if (Level != OptimizationLevel::O0) {
           // We only want to run this with O2 or higher since inliner and SROA
           // don't run in O1.
@@ -1597,6 +1603,10 @@ void AMDGPUPassConfig::addIRPasses() {
   if (EnableLowerModuleLDS) {
     addPass(createAMDGPULowerModuleLDSLegacyPass(&TM));
   }
+
+  // Same as in the LTO pipeline above, for anything that does not go through
+  // it.  Instruments only modules whose first half already ran.
+  addPass(createGPUSanitizerLDSLegacyPass());
 
   // Run atomic optimizer before Atomic Expand
   if ((TM.getTargetTriple().isAMDGCN()) &&
@@ -2381,6 +2391,10 @@ void AMDGPUCodeGenPassBuilder::addIRPasses(PassManagerWrapper &PMW) const {
   // Runs before PromoteAlloca so the latter can account for function uses
   if (EnableLowerModuleLDS)
     addModulePass(AMDGPULowerModuleLDSPass(TM), PMW);
+
+  // Same as in the two pipelines above: whichever of them a module arrives
+  // through, this has to be the last thing to see it whole.
+  addModulePass(GPUSanitizerLDSPass(), PMW);
 
   // Run atomic optimizer before Atomic Expand
   if (TM.getOptLevel() >= CodeGenOptLevel::Less &&

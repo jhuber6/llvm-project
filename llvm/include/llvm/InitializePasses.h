@@ -126,6 +126,7 @@ LLVM_ABI void initializeFuncletLayoutPass(PassRegistry &);
 LLVM_ABI void initializeGCEmptyBasicBlocksLegacyPass(PassRegistry &);
 LLVM_ABI void initializeGCMachineCodeAnalysisPass(PassRegistry &);
 LLVM_ABI void initializeGCModuleInfoPass(PassRegistry &);
+LLVM_ABI void initializeGPUSanitizerLDSLegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeGVNLegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeGlobalDCELegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeGlobalMergeFuncPassWrapperPass(PassRegistry &);
