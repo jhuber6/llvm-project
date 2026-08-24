@@ -1768,6 +1768,8 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
   }
   if (!SanArgs.needsSharedRt() && SanArgs.needsTysanRt())
     StaticRuntimes.push_back("tysan");
+  if (SanArgs.needsDasanRt() && SanArgs.linkRuntimes())
+    StaticRuntimes.push_back("dasan");
   if (!SanArgs.needsSharedRt() && SanArgs.needsUbsanRt()) {
     if (SanArgs.requiresMinimalRuntime()) {
       StaticRuntimes.push_back("ubsan_minimal");

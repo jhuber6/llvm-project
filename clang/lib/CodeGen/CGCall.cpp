@@ -2498,6 +2498,15 @@ void CodeGen::mergeDefaultFunctionDefinitionAttributes(
                                         CodeGenOpts, LangOpts,
                                         /*AttrOnCallSite=*/false, FuncAttrs);
 
+  // A device library arrives here as bitcode built long ago without the flag,
+  // and is then linked in ahead of the pass pipeline, so it is part of the
+  // translation unit the sanitizer runs over and should be checked with it.
+  // Marking it is also what lets it be inlined at all, since the inliner
+  // refuses to cross a mismatch in this attribute -- and a device library
+  // exists to be inlined, on a target where a call costs the register file.
+  if (LangOpts.Sanitize.has(SanitizerKind::DeviceAddress))
+    FuncAttrs.addAttribute(llvm::Attribute::SanitizeDeviceAddress);
+
   if (!WillInternalize && F.isInterposable()) {
     // Do not promote "dynamic" denormal-fp-math to this translation unit's
     // setting for weak functions that won't be internalized. The user has no
