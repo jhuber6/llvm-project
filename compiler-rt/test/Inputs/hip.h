@@ -24,7 +24,20 @@ typedef struct ihipStream_t *hipStream_t;
 
 int hipMalloc(void **Ptr, unsigned long Size);
 int hipFree(void *Ptr);
+int hipMemcpy(void *Dst, const void *Src, unsigned long Size, int Kind);
+int hipMemset(void *Ptr, int Value, unsigned long Size);
 int hipDeviceSynchronize(void);
+int hipGetLastError(void);
+int hipGetDeviceCount(int *Count);
+int hipSetDevice(int Device);
+int hipGetDevice(int *Device);
+
+int hipGetSymbolSize(unsigned long *Size, const void *Symbol);
+int hipGetSymbolAddress(void **Ptr, const void *Symbol);
+int hipMemcpyToSymbol(const void *Symbol, const void *Src, unsigned long Size,
+                      unsigned long Offset = 0, int Kind = 1);
+int hipMemcpyFromSymbol(void *Dst, const void *Symbol, unsigned long Size,
+                        unsigned long Offset = 0, int Kind = 2);
 
 int __hipPushCallConfiguration(dim3 GridDim, dim3 BlockDim,
                                unsigned long SharedMem = 0,
@@ -36,6 +49,18 @@ int hipLaunchKernel(const void *Func, dim3 GridDim, dim3 BlockDim, void **Args,
 
 int printf(const char *, ...);
 }
+
+enum hipMemcpyKind { hipMemcpyHostToDevice = 1, hipMemcpyDeviceToHost = 2 };
+
+__device__ inline unsigned threadIdxX() {
+  return __builtin_amdgcn_workitem_id_x();
+}
+__device__ inline unsigned blockIdxX() {
+  return __builtin_amdgcn_workgroup_id_x();
+}
+__device__ inline void syncThreads() { __builtin_amdgcn_s_barrier(); }
+
+typedef float float4 __attribute__((ext_vector_type(4)));
 
 #define CHECK_HIP(Expr)                                                        \
   do {                                                                         \
