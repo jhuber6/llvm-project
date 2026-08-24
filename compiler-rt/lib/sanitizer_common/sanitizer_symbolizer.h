@@ -139,6 +139,12 @@ class Symbolizer final {
   // Returns a list of symbolized frames for a given address (containing
   // all inlined functions, if necessary).
   SymbolizedStack *SymbolizePC(uptr address);
+  // As above, for a module this process never mapped and so cannot be found by
+  // address: an offload image a tool holds on the side, for instance. The
+  // caller has already worked out which file the address belongs to and where
+  // in it the address falls, so the module list is not consulted.
+  SymbolizedStack* SymbolizeModuleOffset(const char* module_name,
+                                         uptr module_offset);
   bool SymbolizeData(uptr address, DataInfo *info);
   bool SymbolizeFrame(uptr address, FrameInfo *info);
 
