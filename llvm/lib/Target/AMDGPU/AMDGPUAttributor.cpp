@@ -513,16 +513,23 @@ struct AAAMDAttributesFunction : public AAAMDAttributes {
     // FIXME: FLAT_SCRATCH_INIT will not be required here if device-libs
     // implementation for `asan_malloc_impl` is updated.
     const bool HasSanitizerAttrs = hasSanitizerAttributes(*F);
+    const bool HasDeviceAsan =
+        F->hasFnAttribute(Attribute::SanitizeDeviceAddress);
     if (HasSanitizerAttrs) {
       removeAssumedBits(IMPLICIT_ARG_PTR);
       removeAssumedBits(HOSTCALL_PTR);
       removeAssumedBits(FLAT_SCRATCH_INIT);
+    }
+    if (HasDeviceAsan) {
+      removeAssumedBits(DISPATCH_PTR);
     }
 
     for (auto Attr : ImplicitAttrs) {
       if (HasSanitizerAttrs &&
           (Attr.first == IMPLICIT_ARG_PTR || Attr.first == HOSTCALL_PTR ||
            Attr.first == FLAT_SCRATCH_INIT))
+        continue;
+      if (HasDeviceAsan && Attr.first == DISPATCH_PTR)
         continue;
 
       if (F->hasFnAttribute(Attr.second))
@@ -651,6 +658,7 @@ struct AAAMDAttributesFunction : public AAAMDAttributes {
   }
 
   ChangeStatus manifest(Attributor &A) override {
+    Function *F = getAssociatedFunction();
     SmallVector<Attribute, LAST_ARG_POS> AttrList;
     auto &InfoCache = static_cast<AMDGPUInformationCache &>(A.getInfoCache());
     for (auto [Mask, Attr] : InfoCache.getImplicitAttrList()) {
@@ -658,8 +666,14 @@ struct AAAMDAttributesFunction : public AAAMDAttributes {
         AttrList.push_back(Attr);
     }
 
-    return A.manifestAttrs(getIRPosition(), AttrList,
-                           /* ForceReplace */ true);
+    // DASan reads the dispatch packet, a stale annotation would hide it.
+    ChangeStatus Changed = ChangeStatus::UNCHANGED;
+    if (F->hasFnAttribute(Attribute::SanitizeDeviceAddress))
+      Changed = A.removeAttrs(getIRPosition(),
+                              ArrayRef<StringRef>{"amdgpu-no-dispatch-ptr"});
+
+    return Changed | A.manifestAttrs(getIRPosition(), AttrList,
+                                     /* ForceReplace */ true);
   }
 
   const std::string getAsStr(Attributor *) const override {
