@@ -76,6 +76,7 @@
 #include "llvm/Transforms/Instrumentation/BoundsChecking.h"
 #include "llvm/Transforms/Instrumentation/CopyProf.h"
 #include "llvm/Transforms/Instrumentation/DataFlowSanitizer.h"
+#include "llvm/Transforms/Instrumentation/DeviceAddressSanitizer.h"
 #include "llvm/Transforms/Instrumentation/GCOVProfiler.h"
 #include "llvm/Transforms/Instrumentation/HWAddressSanitizer.h"
 #include "llvm/Transforms/Instrumentation/InstrProfiling.h"
@@ -712,6 +713,13 @@ static void addSanitizers(const Triple &TargetTriple,
 
     if (LangOpts.Sanitize.has(SanitizerKind::Realtime))
       MPM.addPass(RealtimeSanitizerPass());
+
+    if (LangOpts.Sanitize.has(SanitizerKind::DeviceAddress)) {
+      DeviceAddressSanitizerOptions Opts;
+      Opts.Recover =
+          CodeGenOpts.SanitizeRecover.has(SanitizerKind::DeviceAddress);
+      MPM.addPass(DeviceAddressSanitizerPass(Opts));
+    }
 
     auto ASanPass = [&](SanitizerMask Mask, bool CompileKernel) {
       if (LangOpts.Sanitize.has(Mask)) {
