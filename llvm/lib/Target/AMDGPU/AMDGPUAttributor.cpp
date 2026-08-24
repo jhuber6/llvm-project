@@ -452,16 +452,23 @@ struct AAAMDAttributesFunction : public AAAMDAttributes {
     // FIXME: FLAT_SCRATCH_INIT will not be required here if device-libs
     // implementation for `asan_malloc_impl` is updated.
     const bool HasSanitizerAttrs = hasSanitizerAttributes(*F);
+    const bool HasDeviceAsan =
+        F->hasFnAttribute(Attribute::SanitizeDeviceAddress);
     if (HasSanitizerAttrs) {
       removeAssumedBits(IMPLICIT_ARG_PTR);
       removeAssumedBits(HOSTCALL_PTR);
       removeAssumedBits(FLAT_SCRATCH_INIT);
+    }
+    if (HasDeviceAsan) {
+      removeAssumedBits(DISPATCH_PTR);
     }
 
     for (auto Attr : ImplicitAttrs) {
       if (HasSanitizerAttrs &&
           (Attr.first == IMPLICIT_ARG_PTR || Attr.first == HOSTCALL_PTR ||
            Attr.first == FLAT_SCRATCH_INIT))
+        continue;
+      if (HasDeviceAsan && Attr.first == DISPATCH_PTR)
         continue;
 
       if (F->hasFnAttribute(Attr.second))
@@ -589,15 +596,22 @@ struct AAAMDAttributesFunction : public AAAMDAttributes {
 
   ChangeStatus manifest(Attributor &A) override {
     SmallVector<Attribute, 8> AttrList;
-    LLVMContext &Ctx = getAssociatedFunction()->getContext();
+    Function *F = getAssociatedFunction();
+    LLVMContext &Ctx = F->getContext();
 
     for (auto Attr : ImplicitAttrs) {
       if (isKnown(Attr.first))
         AttrList.push_back(Attribute::get(Ctx, Attr.second));
     }
 
-    return A.manifestAttrs(getIRPosition(), AttrList,
-                           /* ForceReplace */ true);
+    // DASan reads the dispatch packet, a stale annotation would hide it.
+    ChangeStatus Changed = ChangeStatus::UNCHANGED;
+    if (F->hasFnAttribute(Attribute::SanitizeDeviceAddress))
+      Changed = A.removeAttrs(getIRPosition(),
+                              ArrayRef<StringRef>{"amdgpu-no-dispatch-ptr"});
+
+    return Changed | A.manifestAttrs(getIRPosition(), AttrList,
+                                     /* ForceReplace */ true);
   }
 
   const std::string getAsStr(Attributor *) const override {
