@@ -1394,6 +1394,10 @@ SanitizerMask AMDGPUToolChain::getSupportedSanitizers(
   if (!BA || isXnackAvailable(getTriple(), BA.ArchName))
     SupportedMask |= SanitizerKind::Address;
 
+  // The device sanitizer is supported on all HSA devices.
+  if (getTriple().isAMDGCN())
+    SupportedMask |= SanitizerKind::DeviceAddress;
+
   return SupportedMask;
 }
 

@@ -1658,8 +1658,9 @@ void tools::linkSanitizerRuntimeDeps(const ToolChain &TC,
     CmdArgs.push_back("-lresolv");
 }
 
-// Host interceptor library for offload UBSan.
-static bool hostNeedsUbsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
+template <typename Predicate>
+static bool hostNeedsOffloadRt(Compilation &C, const ToolChain &HostTC,
+                               Predicate NeedsRuntime) {
   if (HostTC.getTriple().isGPU())
     return false;
 
@@ -1677,12 +1678,25 @@ static bool hostNeedsUbsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
            C.getDriver().getOffloadArchs(C, C.getArgs(), Kind, *DevTC)) {
         const ArgList &DevArgs = C.getArgsForToolChain(DevTC, BA, Kind);
         SanitizerArgs DevSan = DevTC->getSanitizerArgs(DevArgs, BA, Kind);
-        if (DevSan.needsUbsanRt() && !DevSan.requiresMinimalRuntime())
+        if (NeedsRuntime(DevSan))
           return true;
       }
     }
   }
   return false;
+}
+
+// Host interceptor library for offload UBSan.
+static bool hostNeedsUbsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
+  return hostNeedsOffloadRt(C, HostTC, [](const SanitizerArgs &S) {
+    return S.needsUbsanRt() && !S.requiresMinimalRuntime();
+  });
+}
+
+// Host allocator and interceptors for DeviceAddressSanitizer.
+static bool hostNeedsDasanRt(Compilation &C, const ToolChain &HostTC) {
+  return hostNeedsOffloadRt(
+      C, HostTC, [](const SanitizerArgs &S) { return S.needsDasanRt(); });
 }
 
 static void
@@ -1697,6 +1711,7 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
   const SanitizerArgs &SanArgs = TC.getSanitizerArgs(Args);
   const bool NeedsOffloadRt = hostNeedsUbsanOffloadRt(C, TC);
   const bool NeedsUbsanRt = SanArgs.needsUbsanRt() || NeedsOffloadRt;
+  const bool NeedsDasanRt = SanArgs.needsDasanRt() || hostNeedsDasanRt(C, TC);
   // Collect shared runtimes.
   if (SanArgs.needsSharedRt()) {
     if (SanArgs.needsAsanRt()) {
@@ -1717,6 +1732,8 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
       else
         SharedRuntimes.push_back("ubsan_standalone");
     }
+    if (NeedsDasanRt && !TC.getTriple().isGPU())
+      SharedRuntimes.push_back("dasan");
     if (SanArgs.needsScudoRt()) {
       SharedRuntimes.push_back("scudo_standalone");
     }
@@ -1752,6 +1769,9 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
   }
   if (NeedsOffloadRt && !Args.hasArg(options::OPT_shared))
     HelperStaticRuntimes.push_back("ubsan_offload-preinit");
+  if (NeedsDasanRt && !TC.getTriple().isGPU() &&
+      !Args.hasArg(options::OPT_shared))
+    HelperStaticRuntimes.push_back("dasan-preinit");
 
   // Collect static runtimes.
   if (Args.hasArg(options::OPT_shared)) {
@@ -1811,6 +1831,8 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
   }
   if (!SanArgs.needsSharedRt() && SanArgs.needsTysanRt())
     StaticRuntimes.push_back("tysan");
+  if (NeedsDasanRt && (!SanArgs.needsSharedRt() || TC.getTriple().isGPU()))
+    StaticRuntimes.push_back("dasan");
   if (!SanArgs.needsSharedRt() && NeedsUbsanRt) {
     if (SanArgs.requiresMinimalRuntime()) {
       StaticRuntimes.push_back("ubsan_minimal");
