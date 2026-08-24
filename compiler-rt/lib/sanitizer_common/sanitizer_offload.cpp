@@ -88,6 +88,10 @@ bool Offload::Resolve() {
     return false;
   SANITIZER_HSA_FUNCTIONS(SANITIZER_HSA_RESOLVE)
 #undef SANITIZER_HSA_RESOLVE
+#define SANITIZER_HSA_RESOLVE_OPTIONAL(Name) \
+  Api.Name = reinterpret_cast<decltype(&::Name)>(dlsym(RTLD_NEXT, #Name));
+  SANITIZER_HSA_VMEM_FUNCTIONS(SANITIZER_HSA_RESOLVE_OPTIONAL)
+#undef SANITIZER_HSA_RESOLVE_OPTIONAL
   return true;
 }
 
@@ -95,12 +99,20 @@ bool Offload::Resolve() {
 // disabled.
 bool Offload::Discover() {
   DeviceList.clear();
+  CpuList.clear();
+  PoolList.clear();
   HostDevice = {};
 
   auto Info = [&](hsa_agent_t Agent, u32 Attr, void* Out) {
     return Api.hsa_agent_get_info(Agent, static_cast<hsa_agent_info_t>(Attr),
                                   Out) == HSA_STATUS_SUCCESS;
   };
+  auto PoolInfo = [&](hsa_amd_memory_pool_t Mem, u32 Attr, void* Out) {
+    return Api.hsa_amd_memory_pool_get_info(
+               Mem, static_cast<hsa_amd_memory_pool_info_t>(Attr), Out) ==
+           HSA_STATUS_SUCCESS;
+  };
+  // Record every allocatable global pool, returns the fine-grained one.
   auto Pool = [&](hsa_agent_t Agent) {
     hsa_amd_memory_pool_t Fine{};
     Iterate<hsa_amd_memory_pool_t>(
@@ -108,17 +120,29 @@ bool Offload::Discover() {
         [&](hsa_amd_memory_pool_t Mem) {
           hsa_amd_segment_t Seg;
           u32 Flags = 0;
-          if (Api.hsa_amd_memory_pool_get_info(Mem,
-                                               HSA_AMD_MEMORY_POOL_INFO_SEGMENT,
-                                               &Seg) != HSA_STATUS_SUCCESS ||
+          if (!PoolInfo(Mem, HSA_AMD_MEMORY_POOL_INFO_SEGMENT, &Seg) ||
               Seg != HSA_AMD_SEGMENT_GLOBAL)
             return HSA_STATUS_SUCCESS;
-          if (Api.hsa_amd_memory_pool_get_info(
-                  Mem, HSA_AMD_MEMORY_POOL_INFO_GLOBAL_FLAGS, &Flags) !=
-              HSA_STATUS_SUCCESS)
+          if (!PoolInfo(Mem, HSA_AMD_MEMORY_POOL_INFO_GLOBAL_FLAGS, &Flags))
             return HSA_STATUS_SUCCESS;
           if (Flags & HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED)
             Fine = Mem;
+
+          bool Allowed = false;
+          if (!PoolInfo(Mem, HSA_AMD_MEMORY_POOL_INFO_RUNTIME_ALLOC_ALLOWED,
+                        &Allowed) ||
+              !Allowed)
+            return HSA_STATUS_SUCCESS;
+          MemoryPool P = {Agent, Mem, Flags, 0, false};
+          uptr Granule = 0;
+          if (PoolInfo(Mem, HSA_AMD_MEMORY_POOL_INFO_RUNTIME_ALLOC_GRANULE,
+                       &Granule))
+            P.Granule = Granule;
+          if (PoolInfo(Mem, HSA_AMD_MEMORY_POOL_INFO_RUNTIME_ALLOC_REC_GRANULE,
+                       &Granule) &&
+              Granule > P.Granule)
+            P.Granule = Granule;
+          PoolList.push_back(P);
           return HSA_STATUS_SUCCESS;
         });
     return Fine;
@@ -132,8 +156,10 @@ bool Offload::Discover() {
     Device D = {};
     D.Agent = Agent;
     D.Pool = Pool(Agent);
-    if (Type == HSA_DEVICE_TYPE_CPU && !HostDevice.Agent.handle) {
-      HostDevice = D;
+    if (Type == HSA_DEVICE_TYPE_CPU) {
+      CpuList.push_back(Agent);
+      if (!HostDevice.Agent.handle)
+        HostDevice = D;
     } else if (Type == HSA_DEVICE_TYPE_GPU) {
       u32 CUs = 0, WavesPerCU = 0;
       if (!Info(Agent, HSA_AGENT_INFO_WAVEFRONT_SIZE, &D.Lanes) || !D.Lanes ||
@@ -144,10 +170,16 @@ bool Offload::Discover() {
       // The RPC interface is deliberately sized to the hardware parallel
       // limits of the device to make deadlock impossible.
       D.MaxWaves = CUs * WavesPerCU;
+      hsa_amd_hdp_flush_t Hdp = {};
+      if (Info(Agent, HSA_AMD_AGENT_INFO_HDP_FLUSH, &Hdp))
+        D.HdpFlush = Hdp.HDP_MEM_FLUSH_CNTL;
       DeviceList.push_back(D);
     }
     return HSA_STATUS_SUCCESS;
   }));
+
+  for (MemoryPool& P : PoolList)
+    for (hsa_agent_t Cpu : CpuList) P.HostAccess |= CanAccess(Cpu, P.Pool);
   return HostDevice.Agent.handle && !DeviceList.empty() &&
          HostDevice.Pool.handle;
 }
@@ -166,6 +198,59 @@ bool Offload::ExecutableInfo(hsa_loaded_code_object_t Obj,
                              u64* Out) {
   *Out = 0;
   return Loader.GetCodeObjectInfo(Obj, Attr, Out) == HSA_STATUS_SUCCESS;
+}
+
+bool Offload::DescribeCodeObject(hsa_loaded_code_object_t Obj,
+                                 hsa_agent_t Agent, CodeObject* Out) {
+  *Out = {};
+  Out->Agent = Agent;
+  u64 LoadBase = 0, LoadSize = 0;
+  if (!ExecutableInfo(Obj, HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_LOAD_BASE,
+                      &LoadBase) ||
+      !ExecutableInfo(Obj, HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_LOAD_SIZE,
+                      &LoadSize) ||
+      !LoadBase || !LoadSize)
+    return false;
+  Out->LoadBase = (uptr)LoadBase;
+  Out->LoadSize = (uptr)LoadSize;
+
+  u64 StorageType = 0, StorageBase = 0, StorageSize = 0;
+  if (ExecutableInfo(
+          Obj,
+          HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_CODE_OBJECT_STORAGE_TYPE,
+          &StorageType) &&
+      StorageType == HSA_VEN_AMD_LOADER_CODE_OBJECT_STORAGE_TYPE_MEMORY &&
+      ExecutableInfo(
+          Obj,
+          HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_CODE_OBJECT_STORAGE_MEMORY_BASE,
+          &StorageBase) &&
+      ExecutableInfo(
+          Obj,
+          HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_CODE_OBJECT_STORAGE_MEMORY_SIZE,
+          &StorageSize) &&
+      StorageBase && StorageSize) {
+    Out->Storage = reinterpret_cast<const void*>(StorageBase);
+    Out->StorageSize = (uptr)StorageSize;
+  }
+  return true;
+}
+
+void Offload::VisitCodeObjects(hsa_executable_t Exec,
+                               void (*Fn)(const CodeObject&, void*),
+                               void* Arg) {
+  InternalMmapVector<CodeObject> Objects;
+  {
+    Lock L(&OffloadMtx);
+    if (!Ready())
+      return;
+    ForEachAgentObject(Exec,
+                       [&](hsa_loaded_code_object_t Obj, hsa_agent_t Agent) {
+                         CodeObject Desc;
+                         if (DescribeCodeObject(Obj, Agent, &Desc))
+                           Objects.push_back(Desc);
+                       });
+  }
+  for (const CodeObject& Obj : Objects) Fn(Obj, Arg);
 }
 
 bool Offload::Init() {
@@ -197,7 +282,15 @@ bool Offload::Release() {
 void Offload::Teardown() {
   UntrackImages();
   Loader = {};
+  for (Device& D : DeviceList) {
+    if (!D.Queue)
+      continue;
+    DestroySignal(D.Barrier);
+    Api.hsa_queue_destroy(D.Queue);
+  }
   DeviceList.clear();
+  CpuList.clear();
+  PoolList.clear();
   HostDevice = {};
 }
 
@@ -227,37 +320,13 @@ void Offload::TrackExecutable(hsa_executable_t Exec) {
     Lock L(&OffloadMtx);
     if (!Ready())
       return;
-    ForEachAgentObject(Exec, [&](hsa_loaded_code_object_t Obj, hsa_agent_t) {
-      u64 LoadBase = 0, LoadSize = 0;
-      if (!ExecutableInfo(Obj,
-                          HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_LOAD_BASE,
-                          &LoadBase) ||
-          !ExecutableInfo(Obj,
-                          HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_LOAD_SIZE,
-                          &LoadSize) ||
-          !LoadBase || !LoadSize)
-        return;
-
-      u64 StorageType = 0, StorageBase = 0, StorageSize = 0;
-      const void* Storage = nullptr;
-      if (ExecutableInfo(
-              Obj,
-              HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_CODE_OBJECT_STORAGE_TYPE,
-              &StorageType) &&
-          StorageType == HSA_VEN_AMD_LOADER_CODE_OBJECT_STORAGE_TYPE_MEMORY &&
-          ExecutableInfo(
-              Obj,
-              HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_CODE_OBJECT_STORAGE_MEMORY_BASE,
-              &StorageBase) &&
-          ExecutableInfo(
-              Obj,
-              HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_CODE_OBJECT_STORAGE_MEMORY_SIZE,
-              &StorageSize) &&
-          StorageBase && StorageSize)
-        Storage = reinterpret_cast<const void*>(StorageBase);
-
-      TrackImage((uptr)LoadBase, (uptr)LoadSize, Storage, (uptr)StorageSize);
-    });
+    ForEachAgentObject(Exec,
+                       [&](hsa_loaded_code_object_t Obj, hsa_agent_t Agent) {
+                         CodeObject Desc;
+                         if (DescribeCodeObject(Obj, Agent, &Desc))
+                           TrackImage(Desc.LoadBase, Desc.LoadSize,
+                                      Desc.Storage, Desc.StorageSize);
+                       });
   }
   OffloadRpc::Start(*this, Exec);
 }
@@ -386,6 +455,170 @@ void Offload::WaitSignal(hsa_signal_t Sig) {
 
 void Offload::StoreSignal(hsa_signal_t Sig) {
   Api.hsa_signal_store_screlease(Sig, 1);
+}
+
+bool Offload::IsGpu(hsa_agent_t Agent) const {
+  for (const Device& D : DeviceList)
+    if (D.Agent.handle == Agent.handle)
+      return true;
+  return false;
+}
+
+bool Offload::CanAccess(hsa_agent_t Agent, hsa_amd_memory_pool_t Pool) {
+  hsa_amd_memory_pool_access_t Access =
+      HSA_AMD_MEMORY_POOL_ACCESS_NEVER_ALLOWED;
+  return Api.hsa_amd_agent_memory_pool_get_info(
+             Agent, Pool, HSA_AMD_AGENT_MEMORY_POOL_INFO_ACCESS, &Access) ==
+             HSA_STATUS_SUCCESS &&
+         Access != HSA_AMD_MEMORY_POOL_ACCESS_NEVER_ALLOWED;
+}
+
+bool Offload::HasVirtualMemory() const {
+#define SANITIZER_HSA_PRESENT(Name) &&Api.Name
+  return true SANITIZER_HSA_VMEM_FUNCTIONS(SANITIZER_HSA_PRESENT);
+#undef SANITIZER_HSA_PRESENT
+}
+
+// Reserve exactly [Addr, Addr + Size) or nothing.
+bool Offload::ReserveAddress(uptr Addr, uptr Size) {
+  void* Va = nullptr;
+  if (Api.hsa_amd_vmem_address_reserve_align(&Va, Size, Addr, Addr & -Addr,
+                                             0) != HSA_STATUS_SUCCESS)
+    return false;
+  if (reinterpret_cast<uptr>(Va) != Addr) {
+    Api.hsa_amd_vmem_address_free(Va, Size);
+    return false;
+  }
+  return true;
+}
+
+void Offload::FreeAddress(uptr Addr, uptr Size) {
+  Api.hsa_amd_vmem_address_free(reinterpret_cast<void*>(Addr), Size);
+}
+
+bool Offload::CreateHandle(hsa_amd_memory_pool_t Pool, uptr Size, u64 Flags,
+                           u64* Handle) {
+  hsa_amd_vmem_alloc_handle_t H;
+  if (Api.hsa_amd_vmem_handle_create(Pool, Size, MEMORY_TYPE_NONE, Flags, &H) !=
+      HSA_STATUS_SUCCESS)
+    return false;
+  *Handle = H.handle;
+  return true;
+}
+
+void Offload::ReleaseHandle(u64 Handle) {
+  Api.hsa_amd_vmem_handle_release(hsa_amd_vmem_alloc_handle_t{Handle});
+}
+
+// A second handle to the physical memory behind an existing allocation.
+bool Offload::ExportHandle(uptr Addr, uptr Size, u64* Handle, uptr* Offset) {
+  int Fd = -1;
+  uint64_t Off = 0;
+  if (Api.hsa_amd_portable_export_dmabuf(reinterpret_cast<void*>(Addr), Size,
+                                         &Fd, &Off) != HSA_STATUS_SUCCESS)
+    return false;
+  hsa_amd_vmem_alloc_handle_t H;
+  hsa_status_t Status = Api.hsa_amd_vmem_import_shareable_handle(Fd, &H);
+  Api.hsa_amd_portable_close_dmabuf(Fd);
+  if (Status != HSA_STATUS_SUCCESS)
+    return false;
+  *Handle = H.handle;
+  *Offset = (uptr)Off;
+  return true;
+}
+
+bool Offload::Map(uptr Addr, uptr Size, uptr Offset, u64 Handle) {
+  return Api.hsa_amd_vmem_map(reinterpret_cast<void*>(Addr), Size, Offset,
+                              hsa_amd_vmem_alloc_handle_t{Handle},
+                              0) == HSA_STATUS_SUCCESS;
+}
+
+void Offload::Unmap(uptr Addr, uptr Size) {
+  Api.hsa_amd_vmem_unmap(reinterpret_cast<void*>(Addr), Size);
+}
+
+bool Offload::SetAccess(uptr Addr, uptr Size,
+                        const hsa_amd_memory_access_desc_t* Desc, uptr Count) {
+  return Api.hsa_amd_vmem_set_access(reinterpret_cast<void*>(Addr), Size, Desc,
+                                     Count) == HSA_STATUS_SUCCESS;
+}
+
+// Reading the last word back forces the posted writes ahead of it out over the
+// bus before the HDP is flushed.
+void Offload::FlushHostWrites(const volatile u64* Last) {
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  if (Last)
+    (void)*Last;
+  for (const Device& D : DeviceList)
+    if (D.HdpFlush)
+      __atomic_store_n(D.HdpFlush, 1u, __ATOMIC_RELEASE);
+}
+
+bool Offload::EnsureQueue(Device& D) {
+  if (D.Queue)
+    return true;
+  if (D.NoQueue)
+    return false;
+  D.NoQueue = true;
+  u32 MaxSize = 0;
+  if (Api.hsa_agent_get_info(D.Agent, HSA_AGENT_INFO_QUEUE_MAX_SIZE,
+                             &MaxSize) != HSA_STATUS_SUCCESS ||
+      !MaxSize)
+    return false;
+  hsa_queue_t* Queue = nullptr;
+  if (Api.hsa_queue_create(D.Agent, Min(MaxSize, 64u), HSA_QUEUE_TYPE_SINGLE,
+                           nullptr, nullptr, 0, 0,
+                           &Queue) != HSA_STATUS_SUCCESS)
+    return false;
+  if (!CreateSignal(&D.Barrier)) {
+    Api.hsa_queue_destroy(Queue);
+    return false;
+  }
+  D.Queue = Queue;
+  D.NoQueue = false;
+  return true;
+}
+
+// A barrier packet with a system-scope acquire invalidates the device caches.
+void Offload::PostBarrier(Device& D) {
+  if (!EnsureQueue(D))
+    return;
+
+  const u16 Header =
+      (HSA_PACKET_TYPE_BARRIER_AND << HSA_PACKET_HEADER_TYPE) |
+      (1u << HSA_PACKET_HEADER_BARRIER) |
+      (HSA_FENCE_SCOPE_SYSTEM << HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE) |
+      (HSA_FENCE_SCOPE_NONE << HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE);
+
+  Api.hsa_signal_store_screlease(D.Barrier, 1);
+  u64 Index = Api.hsa_queue_add_write_index_screlease(D.Queue, 1);
+  auto* Ring = static_cast<hsa_barrier_and_packet_t*>(D.Queue->base_address);
+  hsa_barrier_and_packet_t& Packet = Ring[Index % D.Queue->size];
+  Packet.reserved0 = 0;
+  Packet.reserved1 = 0;
+  Packet.reserved2 = 0;
+  for (hsa_signal_t& Dep : Packet.dep_signal) Dep.handle = 0;
+  Packet.completion_signal = D.Barrier;
+  __atomic_store_n(&Packet.header, Header, __ATOMIC_RELEASE);
+  Api.hsa_signal_store_screlease(D.Queue->doorbell_signal, Index);
+}
+
+void Offload::AwaitBarrier(Device& D) {
+  if (!D.Queue)
+    return;
+  constexpr u64 TimeoutNs = 1000ULL * 1000 * 1000;
+  if (Api.hsa_signal_wait_scacquire(D.Barrier, HSA_SIGNAL_CONDITION_EQ, 0,
+                                    TimeoutNs, HSA_WAIT_STATE_BLOCKED) != 0)
+    VReport(1, "%s: device cache invalidation did not complete\n",
+            SanitizerToolName);
+}
+
+void Offload::InvalidateDeviceCaches() {
+  Lock L(&OffloadMtx);
+  if (!Ready())
+    return;
+  for (Device& D : DeviceList) PostBarrier(D);
+  for (Device& D : DeviceList) AwaitBarrier(D);
 }
 
 }  // namespace __sanitizer
