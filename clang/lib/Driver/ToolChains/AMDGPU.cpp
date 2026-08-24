@@ -1397,6 +1397,10 @@ SanitizerMask AMDGPUToolChain::getSupportedSanitizers(
   if (getTriple().isAMDGCN() && getTriple().getOS() == llvm::Triple::AMDHSA)
     SupportedMask |= SanitizerKind::Concurrency;
 
+  // The device sanitizer is supported on all HSA devices.
+  if (getTriple().isAMDGCN())
+    SupportedMask |= SanitizerKind::DeviceAddress;
+
   return SupportedMask;
 }
 
