@@ -460,16 +460,23 @@ struct AAAMDAttributesFunction : public AAAMDAttributes {
     // FIXME: FLAT_SCRATCH_INIT will not be required here if device-libs
     // implementation for `asan_malloc_impl` is updated.
     const bool HasSanitizerAttrs = hasSanitizerAttributes(*F);
+    const bool HasDeviceAsan =
+        F->hasFnAttribute(Attribute::SanitizeDeviceAddress);
     if (HasSanitizerAttrs) {
       removeAssumedBits(IMPLICIT_ARG_PTR);
       removeAssumedBits(HOSTCALL_PTR);
       removeAssumedBits(FLAT_SCRATCH_INIT);
+    }
+    if (HasDeviceAsan) {
+      removeAssumedBits(DISPATCH_PTR);
     }
 
     for (auto Attr : ImplicitAttrs) {
       if (HasSanitizerAttrs &&
           (Attr.first == IMPLICIT_ARG_PTR || Attr.first == HOSTCALL_PTR ||
            Attr.first == FLAT_SCRATCH_INIT))
+        continue;
+      if (HasDeviceAsan && Attr.first == DISPATCH_PTR)
         continue;
 
       if (F->hasFnAttribute(Attr.second))
