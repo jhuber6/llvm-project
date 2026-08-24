@@ -166,6 +166,7 @@ syn keyword llvmKeyword
       \ safestack
       \ sanitize_address
       \ sanitize_alloc_token
+      \ sanitize_device_address
       \ sanitize_hwaddress
       \ sanitize_memory
       \ sanitize_memtag

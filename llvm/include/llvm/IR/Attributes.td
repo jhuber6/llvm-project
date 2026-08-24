@@ -363,6 +363,9 @@ def SanitizeRealtimeBlocking : EnumAttr<"sanitize_realtime_blocking", IntersectP
 /// Allocation token instrumentation is on.
 def SanitizeAllocToken : EnumAttr<"sanitize_alloc_token", IntersectPreserve, [FnAttr]>;
 
+/// DeviceAddressSanitizer is on.
+def SanitizeDeviceAddress : EnumAttr<"sanitize_device_address", IntersectPreserve, [FnAttr]>;
+
 /// Speculative Load Hardening is enabled.
 ///
 /// Note that this uses the default compatibility (always compatible during
@@ -463,6 +466,7 @@ def : CompatRule<"isEqual<SanitizeThreadAttr>">;
 def : CompatRule<"isEqual<SanitizeTypeAttr>">;
 def : CompatRule<"isEqual<SanitizeMemoryAttr>">;
 def : CompatRule<"isEqual<SanitizeHWAddressAttr>">;
+def : CompatRule<"isEqual<SanitizeDeviceAddressAttr>">;
 def : CompatRule<"isEqual<SanitizeMemTagAttr>">;
 def : CompatRule<"isEqual<SanitizeNumericalStabilityAttr>">;
 def : CompatRule<"isEqual<SanitizeRealtimeAttr>">;

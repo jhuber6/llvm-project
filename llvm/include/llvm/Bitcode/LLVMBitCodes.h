@@ -827,6 +827,7 @@ enum AttributeKindCodes {
   ATTR_KIND_FLATTEN = 108,
   ATTR_KIND_NOIPA = 109,
   ATTR_KIND_NOFREEOBJ = 110,
+  ATTR_KIND_SANITIZE_DEVICE_ADDRESS = 111,
 };
 
 enum ComdatSelectionKindCodes {
