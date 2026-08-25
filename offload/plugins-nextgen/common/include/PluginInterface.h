@@ -551,20 +551,10 @@ struct GenericKernelTy {
       return true;
     // AMD-only execution modes
     case OMP_TGT_EXEC_MODE_SPMD_BIG_JUMP_LOOP:
-    case OMP_TGT_EXEC_MODE_XTEAM_RED:
       ODBG(ODT_Tool) << "AMD-only execution mode";
       return true;
     }
     llvm_unreachable("Unknown execution mode!");
-  }
-
-  /// Indicate whether it is a specialized kernel.
-  bool isSpecializedKernel() const {
-    if (ExecutionMode == OMP_TGT_EXEC_MODE_SPMD_NO_LOOP ||
-        ExecutionMode == OMP_TGT_EXEC_MODE_SPMD_BIG_JUMP_LOOP ||
-        ExecutionMode == OMP_TGT_EXEC_MODE_XTEAM_RED)
-      return true;
-    return false;
   }
 
   /// Compute kernel occupancy
@@ -604,8 +594,17 @@ struct GenericKernelTy {
   bool isNoLoopMode() const {
     return ExecutionMode == OMP_TGT_EXEC_MODE_SPMD_NO_LOOP;
   }
-  bool isXTeamReductionsMode() const {
-    return ExecutionMode == OMP_TGT_EXEC_MODE_XTEAM_RED;
+  // Note: there is deliberately no execution mode for a cross-team reduction.
+  // Such a kernel is a plain SPMD one; use doesTeamsReduction() below to detect
+  // it.
+
+  /// Indicate whether this kernel performs a cross-team (teams) reduction.
+  /// Signalled by a non-zero reduction data size emitted by CodeGen for the
+  /// upstream cross-team reduction path. This drives the AMDGPU reduction
+  /// grid-size heuristic now that the downstream Xteam reduction execution
+  /// mode is no longer generated.
+  bool doesTeamsReduction() const {
+    return KernelEnvironment.Configuration.ReductionDataSize > 0;
   }
 
   /// Indicate if the input block size is within the limit.
@@ -628,8 +627,6 @@ protected:
       return "SPMD-No-Loop";
     case OMP_TGT_EXEC_MODE_SPMD_BIG_JUMP_LOOP:
       return "SPMD-Big-Jump-Loop";
-    case OMP_TGT_EXEC_MODE_XTEAM_RED:
-      return "XTeam-Reductions";
     }
     llvm_unreachable("Unknown execution mode!");
   }
@@ -1094,6 +1091,22 @@ struct GenericDeviceTy : public DeviceAllocatorTy {
   virtual Error queryAsyncImpl(__tgt_async_info &AsyncInfo, bool ReleaseQueue,
                                bool *IsQueueWorkCompleted) = 0;
 
+  /// Indicate whether the plugin transfers data faster when the host side of
+  /// the transfer is pinned memory. If a plugin returns true, the kernel
+  /// launch environment is staged in a pinned host buffer before it is
+  /// submitted. Plugins may benefit for different reasons: some pick a cheaper
+  /// copy path for buffers they know are pinned, others rely on the driver
+  /// only issuing a true asynchronous transfer out of page-locked memory.
+  virtual bool hasFastTransferWithPinnedMemory() const { return false; }
+
+  /// Allocate a pinned host buffer to stage a kernel launch environment. The
+  /// caller owns it until it registers it with
+  /// AsyncInfoWrapperTy::freeAllocationAfterSynchronization, which releases it
+  /// once the transfer reading it has completed. Returns nullptr if staging is
+  /// unavailable, in which case the caller must submit the launch environment
+  /// from ordinary host memory.
+  KernelLaunchEnvironmentTy *getPinnedLaunchEnvBuffer();
+
   /// Check whether the architecture supports VA management
   virtual bool supportVAManagement() const { return false; }
 
@@ -1366,6 +1379,9 @@ struct GenericDeviceTy : public DeviceAllocatorTy {
     llvm_unreachable("Unimplemented");
   }
   virtual uint32_t getOMPXAdjustNumTeamsForXteamRedSmallBlockSize() const {
+    llvm_unreachable("Unimplemented");
+  }
+  virtual bool getOMPXXTeamReductionOccupancyBasedOpt() const {
     llvm_unreachable("Unimplemented");
   }
   virtual bool getOMPXGenericSpmdUseSmallBlockSize() const {

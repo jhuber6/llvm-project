@@ -753,9 +753,7 @@ struct AMDGPUKernelTy : public GenericKernelTy {
         OMPX_GenericSPMDOccupancyBasedOpt(
             "OMPX_GENERIC_SPMD_OCCUPANCY_BASED_OPT", false),
         OMPX_BigJumpLoopOccupancyBasedOpt(
-            "OMPX_BIGJUMPLOOP_OCCUPANCY_BASED_OPT", false),
-        OMPX_XTeamReductionOccupancyBasedOpt(
-            "OMPX_XTEAMREDUCTION_OCCUPANCY_BASED_OPT", false) {}
+            "OMPX_BIGJUMPLOOP_OCCUPANCY_BASED_OPT", false) {}
 
   /// Initialize the AMDGPU kernel.
   Error initImpl(GenericDeviceTy &Device, DeviceImageTy &Image) override {
@@ -903,9 +901,6 @@ struct AMDGPUKernelTy : public GenericKernelTy {
   /// Envar to enable occupancy-based optimization for big jump loop.
   BoolEnvar OMPX_BigJumpLoopOccupancyBasedOpt;
 
-  /// Envar to enable occupancy-based optimization for cross team reduction.
-  BoolEnvar OMPX_XTeamReductionOccupancyBasedOpt;
-
 private:
   /// The kernel object to execute.
   uint64_t KernelObject;
@@ -938,13 +933,15 @@ private:
     uint32_t NumThreads = BlockSize;
 
     // If there is an override already, do nothing. Note the different
-    // default for Xteam Reductions.
-    if (!isXTeamReductionsMode() &&
+    // default for cross-team reductions.
+    const bool IsTeamsReduction = isSPMDMode() && doesTeamsReduction();
+
+    if (!IsTeamsReduction &&
         NumThreads != GenericDevice.getDefaultNumThreads() &&
         NumThreads != ConstWGSize)
       return std::make_pair(false, NumThreads);
 
-    if (isXTeamReductionsMode() &&
+    if (IsTeamsReduction &&
         NumThreads != llvm::omp::xteam_red::DefaultBlockSize &&
         NumThreads != ConstWGSize)
       return std::make_pair(false, NumThreads);
@@ -973,7 +970,11 @@ private:
     if (NumThreads == 0)
       return std::make_pair(false, BlockSize);
 
-    if (isXTeamReductionsMode())
+    // The repeated halving above can leave an awkward block size when the
+    // CodeGen-provided one is not a power of two. Round the value the plugin
+    // picked itself; a block size the user asked for is honored verbatim, see
+    // getEffectiveNumThreads().
+    if (IsTeamsReduction)
       return std::make_pair(true,
                             llvm::omp::getBlockSizeAsPowerOfTwo(NumThreads));
 
@@ -1012,19 +1013,22 @@ private:
       return ConstWGSize;
     }
 
-    if (isXTeamReductionsMode()) {
+    // Cross-team reduction kernels default to the block size CodeGen picked
+    // for them, which is larger than the generic SPMD default. A user-provided
+    // value is honored as given, as long as it fits: the upstream cross-team
+    // reduction works with any block size, unlike the removed Xteamr helpers
+    // that required a power of two.
+    if (isSPMDMode() && doesTeamsReduction()) {
       if (TeamsThreadLimitEnvVar > 0 &&
           TeamsThreadLimitEnvVar <= static_cast<int32_t>(ConstWGSize))
-        return llvm::omp::getBlockSizeAsPowerOfTwo(TeamsThreadLimitEnvVar);
+        return TeamsThreadLimitEnvVar;
       if (UserThreadLimit > 0 && UserThreadLimit != (uint32_t)-1 &&
           UserThreadLimit <= static_cast<uint32_t>(ConstWGSize))
-        return llvm::omp::getBlockSizeAsPowerOfTwo(UserThreadLimit);
+        return UserThreadLimit;
       uint32_t BlockSizeOverride = GenericDevice.getOMPXXteamBlockSize();
       if (BlockSizeOverride > 0 &&
-          BlockSizeOverride <= static_cast<int32_t>(ConstWGSize))
-        return llvm::omp::getBlockSizeAsPowerOfTwo(BlockSizeOverride);
-      assert(((ConstWGSize & (ConstWGSize - 1)) == 0) &&
-             "XTeam Reduction blocksize must be a power of two");
+          BlockSizeOverride <= static_cast<uint32_t>(ConstWGSize))
+        return BlockSizeOverride;
       return ConstWGSize;
     }
 
@@ -1127,7 +1131,12 @@ private:
                           GenericDevice.getBlockLimit(EffectiveNumThreads)));
     }
 
-    if (isXTeamReductionsMode()) {
+    // A cross-team reduction kernel is now emitted by CodeGen as a plain SPMD
+    // kernel using the upstream reduction path (the downstream Xteam reduction
+    // execution mode has been removed). Recognize it via the reduction data
+    // size so the AMDGPU reduction grid-size heuristic (which upstream has no
+    // equivalent for) still applies.
+    if (isSPMDMode() && doesTeamsReduction()) {
       // Here's the default number of teams.
       uint64_t NumGroups = DeviceNumCUs;
       // The number of teams must not exceed this upper limit.
@@ -1161,13 +1170,24 @@ private:
       // the MaxOccupancy equals or exceeds the desirable waves per CU. The
       // assumption is that anything lower is probably resource constrained
       // already and this optimization may not be beneficial.
-      if (OMPX_XTeamReductionOccupancyBasedOpt && NumTeamsEnvVar == 0 &&
-          UserNumBlocks == 0 &&
+      if (GenericDevice.getOMPXXTeamReductionOccupancyBasedOpt() &&
+          NumTeamsEnvVar == 0 && UserNumBlocks == 0 &&
           (MaxOccupancy * llvm::omp::amdgpu_arch::SIMDPerCU >=
            llvm::omp::xteam_red::DesiredWavesPerCU)) {
-        uint64_t newNumTeams =
-            OptimizeNumTeamsBaseOccupancy(GenericDevice, EffectiveNumThreads);
-        return std::min(newNumTeams, MaxNumGroups);
+        NumGroups = std::min(
+            OptimizeNumTeamsBaseOccupancy(GenericDevice, EffectiveNumThreads),
+            MaxNumGroups);
+        // Saturating the device is only worth it if there are enough
+        // iterations to go around: a low trip count would otherwise launch
+        // teams that have nothing to execute and only add to the reduction.
+        // The non-occupancy path below applies the same bound.
+        if (LoopTripCount > 0)
+          NumGroups =
+              std::min(NumGroups, getNumGroupsFromThreadsAndTripCount(
+                                      LoopTripCount, EffectiveNumThreads));
+        ODBG(ODT_Tool) << "xteam-red:NumCUs=" << DeviceNumCUs
+                       << " xteam-red:NumGroups=" << NumGroups;
+        return NumGroups;
       }
 
       // Prefer num_teams clause over environment variable. There is a corner
@@ -3311,6 +3331,8 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
             "LIBOMPTARGET_WAVES_PER_CU_FOR_LOW_TRIP_COUNT", 0),
         OMPX_AdjustNumTeamsForSmallBlockSize("LIBOMPTARGET_AMDGPU_ADJUST_TEAMS",
                                              0),
+        OMPX_XTeamReductionOccupancyBasedOpt(
+            "OMPX_XTEAMREDUCTION_OCCUPANCY_BASED_OPT", false),
         OMPX_AdjustNumTeamsForXteamRedSmallBlockSize(
             "LIBOMPTARGET_AMDGPU_ADJUST_XTEAM_RED_TEAMS", 1),
         OMPX_GenericSpmdUseSmallBlockSize(
@@ -3474,6 +3496,9 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
   virtual uint32_t
   getOMPXAdjustNumTeamsForXteamRedSmallBlockSize() const override {
     return OMPX_AdjustNumTeamsForXteamRedSmallBlockSize;
+  }
+  virtual bool getOMPXXTeamReductionOccupancyBasedOpt() const override {
+    return OMPX_XTeamReductionOccupancyBasedOpt;
   }
   virtual bool getOMPXGenericSpmdUseSmallBlockSize() const override {
     return OMPX_GenericSpmdUseSmallBlockSize;
@@ -4117,6 +4142,10 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
 
     return true;
   }
+
+  /// Transfers out of registered pinned memory take the one-step path in
+  /// dataSubmitImpl instead of staging through an intermediate buffer.
+  bool hasFastTransferWithPinnedMemory() const override { return true; }
 
   /// Submit data to the device (host to device transfer).
   Error dataSubmitImpl(void *TgtPtr, const void *HstPtr, int64_t Size,
@@ -5333,6 +5362,8 @@ private:
   /// done.
   UInt32Envar OMPX_AdjustNumTeamsForSmallBlockSize;
 
+  /// Envar to enable occupancy-based optimization for cross team reduction.
+  /// Defaults come from the per-device envar config table.
   BoolEnvar OMPX_XTeamReductionOccupancyBasedOpt;
 
   /// Envar to allow scaling up the number of teams for Xteam-Reduction,
@@ -5541,45 +5572,57 @@ private:
         OMPX_XTeamReductionOccupancyBasedOpt;
   };
 
+  // OMPX_XTeamReductionOccupancyBasedOpt is disabled everywhere: the member
+  // shadowing that kept it from taking effect was only fixed recently, so the
+  // entries that requested it have never actually run. Enable it per device
+  // once the occupancy-based team count has been evaluated there.
   static inline const std::unordered_map<std::string, DeviceEnvarConfigTy>
-      EnvarConfigs = {{"MI210", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI250X",{.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI250X/MI250",{
-                                 .OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI300A", {.OMPX_UseMultipleSdmaEngines = false,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
-                      {"MI300X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
-                      {"MI308X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 256,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = true,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=0}},
-                      {"MI350X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
-                      {"MI355X", {.OMPX_UseMultipleSdmaEngines = true,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}},
+      EnvarConfigs = {{"MI210",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0}},
+                      {"MI250X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0}},
+                      {"MI250X/MI250",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0}},
+                      {"MI300A",
+                       {.OMPX_UseMultipleSdmaEngines = false,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1}},
+                      {"MI300X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1}},
+                      {"MI308X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_XteamBlockSize = 256,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 0}},
+                      {"MI350X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1}},
+                      {"MI355X",
+                       {.OMPX_UseMultipleSdmaEngines = true,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1}},
                       // Default config for unknown devices.
-                      {"DEFAULT", {.OMPX_UseMultipleSdmaEngines = false,
-                                 .OMPX_XteamBlockSize = 512,
-                                 .OMPX_XTeamReductionOccupancyBasedOpt = false,
-                                 .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize=1}}};
+                      {"DEFAULT",
+                       {.OMPX_UseMultipleSdmaEngines = false,
+                        .OMPX_XteamBlockSize = 512,
+                        .OMPX_XTeamReductionOccupancyBasedOpt = false,
+                        .OMPX_AdjustNumTeamsForXteamRedSmallBlockSize = 1}}};
 
   const DeviceEnvarConfigTy &getEnvarConfig() const {
     std::string DeviceMarketingName = getNormMarketingName();
