@@ -3173,7 +3173,7 @@ LogicalResult TeamsOp::verify() {
                      "in any OpenMP dialect operations");
 
   // Check for num_teams clause restrictions
-  if (failed(verifyNumTeamsClause(getOperation(), this->getNumTeamsLower(),
+  if (failed(verifyNumTeamsClause(op, this->getNumTeamsLower(),
                                   this->getNumTeamsUpperVars())))
     return failure();
 
@@ -3189,7 +3189,7 @@ LogicalResult TeamsOp::verify() {
     return failure();
 
   if (failed(verifyDynGroupprivateClause(
-          getOperation(), getDynGroupprivateAccessGroupAttr(),
+          op, getDynGroupprivateAccessGroupAttr(),
           getDynGroupprivateFallbackAttr(), getDynGroupprivateSize())))
     return failure();
 
