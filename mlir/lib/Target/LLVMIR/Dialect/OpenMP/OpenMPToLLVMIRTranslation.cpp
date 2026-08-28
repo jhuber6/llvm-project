@@ -7378,7 +7378,7 @@ static void collectMapDataFromMapOperands(
     auto mapOp = cast<omp::MapInfoOp>(mapValue.getDefiningOp());
     bool isAttachStyleMap =
         checkRefPtrOrPteeMapWithAttach(mapOp.getMapType()) ||
-        checkPrivatizeableAttachPointer(mapOp.getMapType());
+        isPrivatizeableAttachMap(mapOp.getMapType());
     Value offloadPtr = (mapOp.getVarPtrPtr() && !isAttachStyleMap)
                            ? mapOp.getVarPtrPtr()
                            : mapOp.getVarPtr();
@@ -8156,7 +8156,8 @@ static void processMapWithMembersOf(LLVM::ModuleTranslation &moduleTranslation,
   // instead, for the time being, as it's used only in pointer/allocatable to
   // array cases for the moment. This only ever applies to the parent, so it is
   // checked once here rather than inside the loop below.
-  bool parentIsPrivatizeableAttach = isPrivatizeableAttachMap(parentClause.getMapType());
+  bool parentIsPrivatizeableAttach =
+      isPrivatizeableAttachMap(parentClause.getMapType());
   for (auto [i, idx] : llvm::enumerate(mapInfoIdx)) {
     bool emitParentMap = i == 0 && !parentIsPrivatizeableAttach;
     if (emitParentMap) {
@@ -8164,9 +8165,12 @@ static void processMapWithMembersOf(LLVM::ModuleTranslation &moduleTranslation,
                            combinedInfo, mapData, idx, memberOfFlag,
                            targetDirective);
     } else {
-      processIndividualMap(builder, ompBuilder, mapData, idx, combinedInfo,
-                           targetDirective, memberOfFlag,
-                           /*isTargetParam=*/false, mapDataIndex);
+      processIndividualMap(
+          builder, ompBuilder, mapData, idx, combinedInfo, targetDirective,
+          parentIsPrivatizeableAttach
+              ? llvm::omp::OpenMPOffloadMappingFlags::OMP_MAP_NONE
+              : memberOfFlag,
+          /*isTargetParam=*/false, mapDataIndex);
     }
   }
 }
