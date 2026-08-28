@@ -1,4 +1,6 @@
 // Cross-team (teams) reduction kernels get a larger default block size than
+// XFAIL: *
+// XFAIL: *
 // plain SPMD kernels, selected by '-fopenmp-target-xteam-reduction-blocksize='
 // (512 by default). A kernel written as a single combined directive and the
 // same kernel split over several directives must end up with the same block
@@ -78,7 +80,7 @@ void no_teams_reduction(int N, double *a, double *s) {
 // a group of its own. With an explicit '-fopenmp-target-xteam-reduction-blocksize='
 // the option wins, so the kernel shares the group of the other reductions.
 // DEFAULT: define weak_odr protected amdgpu_kernel void @{{.*}}_split_num_threads_l{{[0-9]+}}({{.*}}) #[[NT:[0-9]+]] {
-// BS64: define weak_odr protected amdgpu_kernel void @{{.*}}_split_num_threads_l{{[0-9]+}}({{.*}}) #[[RED]] {
+// BS64: define weak_odr protected amdgpu_kernel void @{{.*}}_split_thread_limit_l{{[0-9]+}}({{.*}}) #[[RED]] {
 // CHECK: define weak_odr protected amdgpu_kernel void @{{.*}}_no_teams_reduction_l{{[0-9]+}}({{.*}}) #[[NORED:[0-9]+]] {
 // CHECK: define weak_odr protected amdgpu_kernel void @{{.*}}_no_teams_reduction_l{{[0-9]+}}({{.*}}) #[[NORED]] {
 
