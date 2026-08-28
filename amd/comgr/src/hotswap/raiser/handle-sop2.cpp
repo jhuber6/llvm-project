@@ -16,41 +16,6 @@ using namespace llvm;
 namespace COMGR::hotswap {
 namespace {
 
-// Destination and source values for a binary SOP2 instruction.
-struct BinaryOperands {
-  ParsedReg Dst;
-  Value *Src0;
-  Value *Src1;
-};
-
-// Read the destination and two 32-bit sources of a binary instruction.
-Expected<BinaryOperands> readBinary32(OpResolver &Op) {
-  Expected<ParsedReg> Dst = Op.dst();
-  if (!Dst)
-    return Dst.takeError();
-  Expected<Value *> Src0 = Op.src(0);
-  if (!Src0)
-    return Src0.takeError();
-  Expected<Value *> Src1 = Op.src(1);
-  if (!Src1)
-    return Src1.takeError();
-  return BinaryOperands{*Dst, *Src0, *Src1};
-}
-
-// Read the destination and two 64-bit sources of a binary instruction.
-Expected<BinaryOperands> readBinary64(OpResolver &Op) {
-  Expected<ParsedReg> Dst = Op.dst();
-  if (!Dst)
-    return Dst.takeError();
-  Expected<Value *> Src0 = Op.src64(0);
-  if (!Src0)
-    return Src0.takeError();
-  Expected<Value *> Src1 = Op.src64(1);
-  if (!Src1)
-    return Src1.takeError();
-  return BinaryOperands{*Dst, *Src0, *Src1};
-}
-
 // Read the destination, a 64-bit source, and a 32-bit source.
 Expected<BinaryOperands> readBinary64x32(OpResolver &Op) {
   Expected<ParsedReg> Dst = Op.dst();
@@ -139,7 +104,7 @@ Error handleBitOp(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op,
         formatName(Di.TargetSpecificFlags),
         "bitwise operands lack full-width source-wave mask state");
 
-  Expected<BinaryOperands> Args = Is64 ? readBinary64(Op) : readBinary32(Op);
+  Expected<BinaryOperands> Args = Is64 ? Op.readBinary64() : Op.readBinary32();
   if (!Args)
     return Args.takeError();
   Value *Result = emitBitOp(Ctx.B, Kind, Args->Src0, Args->Src1, Name);
@@ -168,7 +133,7 @@ Error handleBitOp(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op,
 // Raise a 32-bit shift and set SCC if its result is nonzero.
 Error handleShift32(RaiseContext &Ctx, OpResolver &Op,
                     Instruction::BinaryOps Opcode, const Twine &Name) {
-  Expected<BinaryOperands> Args = readBinary32(Op);
+  Expected<BinaryOperands> Args = Op.readBinary32();
   if (!Args)
     return Args.takeError();
   Value *Amount = Ctx.B.CreateAnd(Args->Src1, Ctx.B.getInt32(31), "shamt");
@@ -196,7 +161,7 @@ Error handleShift64(RaiseContext &Ctx, OpResolver &Op,
 // Raise a shifted 32-bit addition and set SCC on unsigned overflow.
 Error handleLshlAdd(RaiseContext &Ctx, OpResolver &Op, unsigned Shift,
                     const Twine &Name) {
-  Expected<BinaryOperands> Args = readBinary32(Op);
+  Expected<BinaryOperands> Args = Op.readBinary32();
   if (!Args)
     return Args.takeError();
   Value *Src0 = Ctx.B.CreateZExt(Args->Src0, Ctx.B.getInt64Ty(), Name + "_s0");
@@ -217,7 +182,7 @@ Error handleOverflowingBinary32(RaiseContext &Ctx, OpResolver &Op,
                                 Intrinsic::ID IntrinsicID,
                                 const Twine &ResultName,
                                 const Twine &OverflowName) {
-  Expected<BinaryOperands> Args = readBinary32(Op);
+  Expected<BinaryOperands> Args = Op.readBinary32();
   if (!Args)
     return Args.takeError();
   Value *Pair = Ctx.B.CreateIntrinsic(IntrinsicID, {Ctx.B.getInt32Ty()},
@@ -293,7 +258,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return handleOverflowingBinary32(Ctx, Op, Intrinsic::ssub_with_overflow,
                                      "sub", "sub_overflow");
   case CanonicalOp::S_ADDC_U32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Scc = Ctx.registers().regFile().loadSCC(Ctx.B);
@@ -313,7 +278,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_SUBB_U32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Scc = Ctx.registers().regFile().loadSCC(Ctx.B);
@@ -335,7 +300,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
   }
 
   case CanonicalOp::S_MUL_I32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Result = Ctx.B.CreateMul(Args->Src0, Args->Src1, "mul");
@@ -343,7 +308,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_MUL_HI_U32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *A = Ctx.B.CreateZExt(Args->Src0, Ctx.B.getInt64Ty());
@@ -355,7 +320,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_MUL_HI_I32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *A = Ctx.B.CreateSExt(Args->Src0, Ctx.B.getInt64Ty());
@@ -367,7 +332,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_MUL_U64: {
-    Expected<BinaryOperands> Args = readBinary64(Op);
+    Expected<BinaryOperands> Args = Op.readBinary64();
     if (!Args)
       return Args.takeError();
     Value *Result = Ctx.B.CreateMul(Args->Src0, Args->Src1, "mul64");
@@ -375,7 +340,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_ADD_NC_U64: {
-    Expected<BinaryOperands> Args = readBinary64(Op);
+    Expected<BinaryOperands> Args = Op.readBinary64();
     if (!Args)
       return Args.takeError();
     Value *Result = Ctx.B.CreateAdd(Args->Src0, Args->Src1, "add64");
@@ -383,7 +348,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_SUB_NC_U64: {
-    Expected<BinaryOperands> Args = readBinary64(Op);
+    Expected<BinaryOperands> Args = Op.readBinary64();
     if (!Args)
       return Args.takeError();
     Value *Result = Ctx.B.CreateSub(Args->Src0, Args->Src1, "sub64");
@@ -392,7 +357,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
   }
 
   case CanonicalOp::S_MIN_I32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Condition = Ctx.B.CreateICmpSLT(Args->Src0, Args->Src1);
@@ -403,7 +368,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_MIN_U32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Condition = Ctx.B.CreateICmpULT(Args->Src0, Args->Src1);
@@ -414,7 +379,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_MAX_I32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Condition = Ctx.B.CreateICmpSGE(Args->Src0, Args->Src1);
@@ -425,7 +390,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_MAX_U32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Condition = Ctx.B.CreateICmpUGE(Args->Src0, Args->Src1);
@@ -446,7 +411,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return handleLshlAdd(Ctx, Op, 4, "lshl4_add");
 
   case CanonicalOp::S_ABSDIFF_I32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Diff = Ctx.B.CreateSub(Args->Src0, Args->Src1, "absdiff_sub");
@@ -459,7 +424,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
   }
 
   case CanonicalOp::S_BFM_B32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Width = Ctx.B.CreateAnd(Args->Src0, Ctx.B.getInt32(31));
@@ -471,7 +436,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_BFM_B64: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Width32 = Ctx.B.CreateAnd(Args->Src0, Ctx.B.getInt32(63));
@@ -512,7 +477,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
       }
     }
 
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Shift = Ctx.B.CreateAnd(Args->Src1, Ctx.B.getInt32(0x1f));
@@ -533,7 +498,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_BFE_I32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Shift = Ctx.B.CreateAnd(Args->Src1, Ctx.B.getInt32(0x1f));
@@ -584,7 +549,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
   }
 
   case CanonicalOp::S_PACK_LL_B32_B16: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Lo = Ctx.B.CreateAnd(Args->Src0, Ctx.B.getInt32(0xffff));
@@ -595,7 +560,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_PACK_LH_B32_B16: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Lo = Ctx.B.CreateAnd(Args->Src0, Ctx.B.getInt32(0xffff));
@@ -606,7 +571,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
   }
 
   case CanonicalOp::S_CSELECT_B32: {
-    Expected<BinaryOperands> Args = readBinary32(Op);
+    Expected<BinaryOperands> Args = Op.readBinary32();
     if (!Args)
       return Args.takeError();
     Value *Scc = Ctx.registers().regFile().loadSCC(Ctx.B);
@@ -615,7 +580,7 @@ Error handleSOP2(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op) {
     return Error::success();
   }
   case CanonicalOp::S_CSELECT_B64: {
-    Expected<BinaryOperands> Args = readBinary64(Op);
+    Expected<BinaryOperands> Args = Op.readBinary64();
     if (!Args)
       return Args.takeError();
     Value *Scc = Ctx.registers().regFile().loadSCC(Ctx.B);
