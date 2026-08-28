@@ -124,6 +124,9 @@ namespace {
 class DefaultTestProjection final : public WaveProjection {
 public:
   using WaveProjection::WaveProjection;
+  llvm::Value *emitSourceWaveId(llvm::IRBuilder<> &) const override {
+    return nullptr;
+  }
   llvm::Value *emitLaneActiveBit(llvm::IRBuilder<> &,
                                  llvm::Value *) const override {
     return nullptr;
