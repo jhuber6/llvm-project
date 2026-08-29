@@ -2458,8 +2458,7 @@ SIFoldOperandsImpl::isOMod(const MachineInstr &MI) const {
     const MachineOperand *Src1 = TII->getNamedOperand(MI, AMDGPU::OpName::src1);
 
     // If there is an immediate operand, it must be Src1
-    std::optional<int64_t> Src1Imm =
-        TII->getImmOrMaterializedImm(*MRI, const_cast<MachineOperand &>(*Src1));
+    std::optional<int64_t> Src1Imm = TII->getImmOrMaterializedImm(*MRI, *Src1);
     if (!Src1Imm)
       return {nullptr, SIOutMods::NONE};
 
@@ -2512,8 +2511,7 @@ SIFoldOperandsImpl::isOMod(const MachineInstr &MI) const {
     const MachineOperand *Src1 = TII->getNamedOperand(MI, AMDGPU::OpName::src1);
 
     // If there is an immediate operand, it must be Src1
-    std::optional<int64_t> Src1Imm =
-        TII->getImmOrMaterializedImm(*MRI, const_cast<MachineOperand &>(*Src1));
+    std::optional<int64_t> Src1Imm = TII->getImmOrMaterializedImm(*MRI, *Src1);
     if (!Src1Imm)
       return {nullptr, SIOutMods::NONE};
 
