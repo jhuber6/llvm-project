@@ -1,0 +1,12 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+config.name_suffix = "@CONFIG_NAME@"
+config.target_cflags = "@CSAN_TEST_TARGET_CFLAGS@"
+config.target_arch = "@CSAN_TEST_TARGET_ARCH@"
+config.csan_can_run_hip = @COMPILER_RT_CSAN_CAN_RUN_HIP_PYBOOL@
+config.csan_can_run_openmp_offload = @COMPILER_RT_CSAN_CAN_RUN_OPENMP_OFFLOAD_PYBOOL@
+config.csan_gpu_arch = "@CSAN_GPU_ARCH@"
+config.csan_hip_lib_dir = "@CSAN_HIP_LIB_DIR@"
+
+lit_config.load_config(config, "@COMPILER_RT_BINARY_DIR@/test/lit.common.configured")
+lit_config.load_config(config, "@CSAN_LIT_TESTS_DIR@/lit.common.cfg.py")

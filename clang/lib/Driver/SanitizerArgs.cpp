@@ -630,28 +630,37 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
           DiagnoseErrors && KindsToDiagnose) {
         bool IsExplicitDevice =
             Arg->getBaseArg().getOption().matches(options::OPT_Xarch_device);
-        // For device offload compilation, emit a warning since the sanitizer
-        // may still work on the host. For non-offload compilation or explicit
-        // device specification, emit an error.
-        if (DeviceOffloadKind != Action::OFK_None &&
-            DeviceOffloadKind != Action::OFK_Host) {
-          // For warnings, extract just the sanitizer names (e.g., "fuzzer")
-          // instead of the full argument (e.g., "-fsanitize=fuzzer")
-          SanitizerSet KindSet;
-          KindSet.Mask = KindsToDiagnose;
-          D.Diag(IsExplicitDevice
-                     ? diag::err_drv_unsupported_option_part_for_target
-                     : diag::warn_drv_unsupported_option_part_for_target)
-              << toString(KindSet) << Arg->getAsString(Args)
-              << TC.getTriple().str();
-        } else {
-          // For non-offload targets, use the shorter diagnostic format
-          D.Diag(diag::err_drv_unsupported_opt_for_target)
-              << describeSanitizeArg(Arg, KindsToDiagnose)
-              << TC.getTriple().str();
+        // Shared -fsanitize=concurrency is for the device; accept it on the
+        // host during offload and leave BoundArchSupported to drop it.
+        if (DeviceOffloadKind == Action::OFK_Host &&
+            !Arg->getBaseArg().getOption().matches(options::OPT_Xarch_host)) {
+          DiagnosedKinds |= KindsToDiagnose & SanitizerKind::Concurrency;
+          KindsToDiagnose &= ~SanitizerKind::Concurrency;
         }
+        if (KindsToDiagnose) {
+          // For device offload compilation, emit a warning since the sanitizer
+          // may still work on the host. For non-offload compilation or explicit
+          // device specification, emit an error.
+          if (DeviceOffloadKind != Action::OFK_None &&
+              DeviceOffloadKind != Action::OFK_Host) {
+            // For warnings, extract just the sanitizer names (e.g., "fuzzer")
+            // instead of the full argument (e.g., "-fsanitize=fuzzer")
+            SanitizerSet KindSet;
+            KindSet.Mask = KindsToDiagnose;
+            D.Diag(IsExplicitDevice
+                       ? diag::err_drv_unsupported_option_part_for_target
+                       : diag::warn_drv_unsupported_option_part_for_target)
+                << toString(KindSet) << Arg->getAsString(Args)
+                << TC.getTriple().str();
+          } else {
+            // For non-offload targets, use the shorter diagnostic format
+            D.Diag(diag::err_drv_unsupported_opt_for_target)
+                << describeSanitizeArg(Arg, KindsToDiagnose)
+                << TC.getTriple().str();
+          }
 
-        DiagnosedKinds |= KindsToDiagnose;
+          DiagnosedKinds |= KindsToDiagnose;
+        }
       }
 
       Add &= BoundArchSupported;

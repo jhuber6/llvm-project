@@ -488,6 +488,9 @@ using namespace __sanitizer;
 namespace __ubsan {
 using namespace __sanitizer;
 }
+namespace __csan {
+using namespace __sanitizer;
+}
 namespace __xray {
 using namespace __sanitizer;
 }

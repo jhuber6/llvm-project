@@ -73,9 +73,8 @@ static constexpr char kCsanInitName[] = "__csan_init";
 namespace {
 
 /// Flags on the trailing i32 of __csan_{read,write}* / range probes.
-/// Further bits (e.g. SCOPED for async copies) can be added without a new
-/// callback family. TSan has separate atomic callbacks only because those
-/// functions perform the memory op; CSan does not.
+/// Must match CSAN_ACCESS_* in compiler-rt/lib/csan/csan_defs.h. Further bits
+/// (e.g. SCOPED for async copies) can be added without a new callback family.
 enum AccessFlags : unsigned {
   AF_None = 0,
   AF_Atomic = 1u << 0,
