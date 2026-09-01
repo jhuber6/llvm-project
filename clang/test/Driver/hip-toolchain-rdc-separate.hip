@@ -17,6 +17,7 @@
 // CHECK-SAME: "-fcuda-is-device" "-fno-threadsafe-statics" "-fvisibility=hidden"
 // CHECK-SAME: "-fapply-global-visibility-to-externs"
 // CHECK-SAME: "{{.*}}lib1.bc" "{{.*}}lib2.bc"
+// CHECK-SAME: "-target-cpu" "gfx803"
 // CHECK-SAME: "-fgpu-rdc"
 // CHECK-SAME: {{.*}} "-o" "[[A_BC1:.*o]]" "-x" "hip"
 // CHECK-SAME: {{.*}} [[A_SRC:".*a.cu"]]
@@ -28,6 +29,7 @@
 // CHECK-SAME: {{.*}} "-main-file-name" "a.cu"
 // CHECK-SAME: "-fcuda-is-device"
 // CHECK-SAME: "{{.*}}lib1.bc" "{{.*}}lib2.bc"
+// CHECK-SAME: "-target-cpu" "gfx900"
 // CHECK-SAME: "-fgpu-rdc"
 // CHECK-SAME: {{.*}} "-o" "[[A_BC2:.*o]]" "-x" "hip"
 // CHECK-SAME: {{.*}} [[A_SRC]]
@@ -52,6 +54,7 @@
 // CHECK-SAME: "-fcuda-is-device" "-fno-threadsafe-statics" "-fvisibility=hidden"
 // CHECK-SAME: "-fapply-global-visibility-to-externs"
 // CHECK-SAME: "{{.*}}lib1.bc" "{{.*}}lib2.bc"
+// CHECK-SAME: "-target-cpu" "gfx803"
 // CHECK-SAME: "-fgpu-rdc"
 // CHECK-SAME: {{.*}} "-o" "[[B_BC1:.*o]]" "-x" "hip"
 // CHECK-SAME: {{.*}} [[B_SRC:".*b.hip"]]
@@ -63,6 +66,7 @@
 // CHECK-SAME: {{.*}} "-main-file-name" "b.hip"
 // CHECK-SAME: "-fcuda-is-device"
 // CHECK-SAME: "{{.*}}lib1.bc" "{{.*}}lib2.bc"
+// CHECK-SAME: "-target-cpu" "gfx900"
 // CHECK-SAME: "-fgpu-rdc"
 // CHECK-SAME: {{.*}} "-o" "[[B_BC2:.*o]]" "-x" "hip"
 // CHECK-SAME: {{.*}} [[B_SRC]]

@@ -21,7 +21,7 @@
 // RUN: %clang -### -target amdgcn-amd-amdhsa \
 // RUN:   -nostdlib %s 2>&1 | FileCheck -check-prefix=NONE %s
 
-// CHECK: "-triple" "amdgpu9.08
+// CHECK: "-target-cpu" "gfx908"
 // CHECK-SAME: "-mxnack"
 // CHECK-SAME: "-mno-sramecc"
 
