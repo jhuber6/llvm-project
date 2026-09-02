@@ -1098,9 +1098,9 @@ void CodeGenAction::runOptimizationPipeline(llvm::raw_pwrite_stream &os) {
             os, /*ShouldPreserveUseListOrder=*/false, emitSummary));
       }
     } else if (action == BackendActionTy::Backend_EmitLL) {
-      mpm.addPass(llvm::PrintModulePass(os, /*Banner=*/"",
-                                        /*ShouldPreserveUseListOrder=*/false,
-                                        emitSummary));
+      mpm.addPass(llvm::PrintModulePass(
+          os, /*Banner=*/"", /*ShouldPreserveUseListOrder=*/false, emitSummary,
+          /*ShouldRenumberMetadata=*/true));
     }
   }
 
