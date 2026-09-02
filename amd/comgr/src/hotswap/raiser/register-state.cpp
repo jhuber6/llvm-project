@@ -26,6 +26,7 @@
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -43,7 +44,7 @@ Expected<RegisterState> RegisterState::create(IRBuilder<> &B,
                                               const KernelMeta &Meta) {
   UserSgprLayout Layout;
   if (Error Err = UserSgprLayout::tryFromKernelMeta(
-          Meta, Projection.sourceIsa(), MC.SubtargetInfo->getCPU(), Layout))
+          Meta, Projection.SourceSTI, MC.SubtargetInfo->getCPU(), Layout))
     return std::move(Err);
   RegisterState Registers(B, Projection, MC, std::move(Layout));
   if (Error Err = Registers.seedEntrySgprs())
@@ -109,8 +110,8 @@ Error RegisterState::seedEntrySgprs() {
 RegisterState::RegisterState(IRBuilder<> &B, const WaveProjection &Projection,
                              const MCState &MC, UserSgprLayout Layout)
     : B(B), Projection(Projection), MC(MC), Layout(std::move(Layout)) {
-  Regs.init(B, B.getInt32Ty(), B.getInt1Ty(), Projection.sourceIsa(),
-            *MC.RegInfo, Projection);
+  Regs.init(B, B.getInt32Ty(), B.getInt1Ty(), Projection.SourceSTI, *MC.RegInfo,
+            Projection);
 
   SgprShadows.reserve(Regs.Sgpr.size());
   for (unsigned I = 0, E = Regs.Sgpr.size(); I != E; ++I) {
@@ -245,7 +246,7 @@ Expected<ParsedReg> RegisterState::parseReg(const DecodedInst &Di,
   switch (Lane) {
   case AMDGPU::VCC_HI:
     // VCC_HI is a scratch scalar, not part of VCC, on wave32.
-    if (Projection.sourceIsa().isWave32()) {
+    if (Projection.sourceWaveSize() == 32) {
       Pr.RegKind = ParsedReg::VCC_HI_SCRATCH;
       Pr.WidthInDwords = 1;
       return Pr;
@@ -256,12 +257,12 @@ Expected<ParsedReg> RegisterState::parseReg(const DecodedInst &Di,
     Pr.BaseIdx = (Lane == AMDGPU::VCC_HI) ? 1 : 0;
     Pr.WidthInDwords =
         CanonicalReg == AMDGPU::VCC
-            ? static_cast<uint8_t>(Projection.sourceIsa().waveSize() / 32)
+            ? static_cast<uint8_t>(Projection.sourceWaveSize() / 32)
             : 1;
     return Pr;
   case AMDGPU::EXEC_HI:
     // EXEC_HI is a scratch scalar, not part of EXEC, on wave32.
-    if (Projection.sourceIsa().isWave32()) {
+    if (Projection.sourceWaveSize() == 32) {
       Pr.RegKind = ParsedReg::EXEC_HI_SCRATCH;
       Pr.WidthInDwords = 1;
       return Pr;
@@ -690,7 +691,7 @@ Expected<Value *> RegisterState::readOpExecWidth(const DecodedInst &Di,
       Value *Narrow =
           (Projection.sourceWaveScopedLaneOps() && Pr.WidthInDwords >= 2)
               ? Regs.loadSGPR64(B, BaseIdx)
-              : (Projection.sourceIsa().isWave32()
+              : (Projection.sourceWaveSize() == 32
                      ? Regs.loadSGPR32(B, BaseIdx)
                      : Regs.loadSGPR64(B, BaseIdx));
       Value *Fallback = WidenToExec(Narrow);
@@ -714,10 +715,10 @@ Expected<Value *> RegisterState::readOpExecWidth(const DecodedInst &Di,
   }
   // Interpret immediate masks at source width and replicate them like SGPR
   // operands when widening.
-  Type *SrcTy =
-      Projection.sourceIsa().isWave32() ? B.getInt32Ty() : B.getInt64Ty();
+  const unsigned SourceWaveSize = Projection.sourceWaveSize();
+  Type *SrcTy = SourceWaveSize == 32 ? B.getInt32Ty() : B.getInt64Ty();
   uint64_t SrcMask =
-      Projection.sourceIsa().isWave32() ? 0xFFFFFFFFull : 0xFFFFFFFFFFFFFFFFull;
+      SourceWaveSize == 32 ? 0xFFFFFFFFull : 0xFFFFFFFFFFFFFFFFull;
   if (std::optional<int64_t> Val = evalOperandAsConst(Di.Inst, OpIdx)) {
     uint64_t Bits = static_cast<uint64_t>(*Val) & SrcMask;
     Value *Narrow = ConstantInt::get(SrcTy, Bits, /*IsSigned=*/false);
@@ -797,9 +798,7 @@ Value *RegisterState::emitCurrentSourceWaveHasActiveLane() {
   Value *Exec = Regs.loadExec(B);
   if (!Projection.providesFullWaveExecInvariant())
     return emitLaneActiveBit();
-  const ISAProfile &SourceIsa = Projection.sourceIsa();
-  unsigned SourceBits = SourceIsa.waveSize();
-  assert(SourceIsa.hasValidWaveSize() && "source wave size must be 32 or 64");
+  unsigned SourceBits = Projection.sourceWaveSize();
   if (SourceBits >= 64)
     return B.CreateICmpNE(Exec, ConstantInt::get(Exec->getType(), 0),
                           "source_wave_active");
