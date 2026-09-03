@@ -37,32 +37,19 @@ namespace lower {
 namespace omp {
 bool DataSharingProcessor::OMPConstructSymbolVisitor::isSymbolDefineBy(
     const semantics::Symbol *symbol, lower::pft::Evaluation &eval) const {
-  auto definition = symDefMap.find(symbol);
-  if (definition == symDefMap.end())
-    return false;
-
-  // The selected variant is not an enclosing parse-tree construct, so its
-  // IVs map to a null construct. Admit only IVs owned by this variant because
-  // enclosing IVs can map to null too.
-  if (isMetadirectiveLoop)
-    return metadirectiveLoopIVs.contains(symbol) &&
-           definition->second ==
-               ConstructPtr(
-                   static_cast<const parser::OpenMPConstruct *>(nullptr));
-
   return eval.visit(common::visitors{
-      [&](const parser::OpenMPConstruct &ompConstruct) {
-        return definition->second == ConstructPtr(&ompConstruct);
+      [&](const parser::OpenMPConstruct &functionParserNode) {
+        return symDefMap.count(symbol) &&
+               symDefMap.at(symbol) == ConstructPtr(&functionParserNode);
       },
-      [](const auto &) { return false; }});
+      [](const auto &functionParserNode) { return false; }});
 }
 
 bool DataSharingProcessor::OMPConstructSymbolVisitor::
     isSymbolDefineByNestedDeclaration(const semantics::Symbol *symbol) const {
-  auto definition = symDefMap.find(symbol);
-  return definition != symDefMap.end() &&
+  return symDefMap.count(symbol) &&
          std::holds_alternative<const parser::DeclarationConstruct *>(
-             definition->second);
+             symDefMap.at(symbol));
 }
 
 static bool isConstructWithTopLevelTarget(lower::pft::Evaluation &eval) {
@@ -79,26 +66,15 @@ DataSharingProcessor::DataSharingProcessor(
     lower::AbstractConverter &converter, semantics::SemanticsContext &semaCtx,
     const List<Clause> &clauses, lower::pft::Evaluation &eval,
     bool shouldCollectPreDeterminedSymbols, bool useDelayedPrivatization,
-    lower::SymMap &symTable, bool isTargetPrivatization,
-    llvm::ArrayRef<const semantics::Symbol *> metadirectiveLoopIVs)
+    lower::SymMap &symTable, bool isTargetPrivatization)
     : converter(converter), semaCtx(semaCtx),
       firOpBuilder(converter.getFirOpBuilder()), clauses(clauses), eval(eval),
       shouldCollectPreDeterminedSymbols(shouldCollectPreDeterminedSymbols),
       useDelayedPrivatization(useDelayedPrivatization), symTable(symTable),
-      isTargetPrivatization(isTargetPrivatization),
-      isMetadirectiveLoop(!metadirectiveLoopIVs.empty()),
-      visitor(semaCtx, metadirectiveLoopIVs) {
+      isTargetPrivatization(isTargetPrivatization), visitor(semaCtx) {
   eval.visit([&](const auto &functionParserNode) {
     parser::Walk(functionParserNode, visitor);
   });
-  // For metadirective evaluations, the associated DO loop is spliced into the
-  // evaluation tree but is not part of the metadirective's parse tree. Walk
-  // nested evaluations' parse trees so the visitor can track their symbols
-  // (e.g. loop iteration variables).
-  if (isMetadirectiveLoop && eval.hasNestedEvaluations()) {
-    for (auto &nestedEval : eval.getNestedEvaluations())
-      nestedEval.visit([&](const auto &node) { parser::Walk(node, visitor); });
-  }
 }
 
 DataSharingProcessor::DataSharingProcessor(lower::AbstractConverter &converter,
@@ -249,31 +225,9 @@ void DataSharingProcessor::copyLastPrivateSymbol(
     const semantics::Symbol *sym, mlir::OpBuilder::InsertPoint *lastPrivIP) {
   // Conditional-lastprivate symbols use their own guarded copy-back (from the
   // reduction accumulator), not the standard "last iteration wins" copy-back.
-  if (!sym->test(semantics::Symbol::Flag::OmpLastPrivate) ||
-      conditionalLastPrivatizedSymbols.contains(sym))
-    return;
-
-  if (sym->has<semantics::HostAssocDetails>()) {
+  if (sym->test(semantics::Symbol::Flag::OmpLastPrivate) &&
+      !conditionalLastPrivatizedSymbols.contains(sym))
     converter.copyHostAssociateVar(*sym, lastPrivIP, /*hostIsSource=*/false);
-    return;
-  }
-
-  assert(isMetadirectiveLoop &&
-         "unexpected lastprivate symbol without host association");
-
-  // Metadirective loop IVs can be marked lastprivate during lowering, after
-  // semantic host-association symbols would normally be created. Copy from the
-  // private binding back to the one-level-up binding directly.
-  mlir::OpBuilder::InsertionGuard guard(firOpBuilder);
-  if (lastPrivIP)
-    firOpBuilder.restoreInsertionPoint(*lastPrivIP);
-  lower::SymbolBox hostBox = converter.lookupOneLevelUpSymbol(*sym);
-  lower::SymbolBox privBox = converter.shallowLookupSymbol(*sym);
-  assert(hostBox && privBox &&
-         "expected symbol bindings for lastprivate loop IV");
-  if (hostBox.getAddr() != privBox.getAddr())
-    converter.copyVar(converter.getCurrentLocation(), hostBox.getAddr(),
-                      privBox.getAddr(), fir::FortranVariableFlagsEnum::None);
 }
 
 void DataSharingProcessor::collectOmpObjectListSymbol(
@@ -625,20 +579,7 @@ void DataSharingProcessor::collectPrivatizedSymbols(
   };
 
   llvm::SetVector<const semantics::Scope *> clauseScopes;
-  const semantics::Scope *curScope = collectScopes(semaCtx, eval, clauseScopes);
-
-  // For metadirective evaluations, the source range only covers the directive
-  // clauses, not the spliced DO loop. The scope found from that narrow range
-  // may not include parent scopes where the loop IV is declared (e.g. the
-  // function scope when the metadirective is inside a target region). Walk up
-  // the scope chain to include all ancestor scopes.
-  if (isMetadirectiveLoop && curScope) {
-    const semantics::Scope *scope = curScope;
-    while (scope->kind() != semantics::Scope::Kind::Global) {
-      clauseScopes.insert(scope);
-      scope = &scope->parent();
-    }
-  }
+  (void)collectScopes(semaCtx, eval, clauseScopes);
 
   for (const auto *sym : allSymbols) {
     if (semantics::omp::IsPrivatizable(*sym) &&
@@ -668,14 +609,6 @@ void DataSharingProcessor::collectSymbols(
   converter.collectSymbolSet(eval, allSymbols, flag,
                              /*collectSymbols=*/true,
                              /*collectHostAssociatedSymbols=*/true);
-
-  // Collect symbols from spliced nested evaluations for metadirectives.
-  if (isMetadirectiveLoop && eval.hasNestedEvaluations()) {
-    for (auto &nestedEval : eval.getNestedEvaluations())
-      converter.collectSymbolSet(nestedEval, allSymbols, flag,
-                                 /*collectSymbols=*/true,
-                                 /*collectHostAssociatedSymbols=*/true);
-  }
 
   llvm::SetVector<const semantics::Symbol *> symbolsInNestedRegions;
   collectSymbolsInNestedRegions(eval, flag, symbolsInNestedRegions);
