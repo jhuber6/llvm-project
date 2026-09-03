@@ -3247,6 +3247,7 @@ def AMDGPUFrontendVisibleFeatures {
   FeatureSupportsXNACK, FeatureSupportsSRAMECC, FeatureXNACKOnOffModes,
   FeatureSGPRInitBug, FeatureApertureRegs, FeatureGetDoorbellID,
   FeatureAGPRAlloc, Feature1536VGPRs,
+  FeatureHalfAddressablePhysicalLocalMemory,
   ];
 }
 
