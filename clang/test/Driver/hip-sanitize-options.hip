@@ -107,10 +107,12 @@
 // CHECK-NOT: {{"[^"]*lld(\.exe){0,1}".* ".*hip.bc"}}
 // CHECK: {{"[^"]*clang[^"]*".* "-triple" "x86_64-unknown-linux-gnu".* "-fsanitize=address"}}
 
-// NORDC: {{"[^"]*clang[^"]*".* "-emit-llvm-bc".* "-fcuda-is-device".* .* "-mlink-bitcode-file" ".*asanrtl.bc".* "-fsanitize=address".*}} "-o" "[[OUT:[^"]*]]"
+// NORDC: {{"[^"]*clang[^"]*".* "-emit-llvm-bc".* "-fcuda-is-device".* "-fsanitize=address".*}} "-o" "[[OUT:[^"]*]]"
+// NORDC-NOT: asanrtl.bc
 // NORDC: {{"[^"]*clang[^"]*".* "-triple" "x86_64-unknown-linux-gnu".* "-fsanitize=address"}}
 
-// RDC: {{"[^"]*clang[^"]*".* "-emit-llvm-bc".* "-fcuda-is-device".* "-mlink-bitcode-file" ".*asanrtl.bc".* "-fsanitize=address".*}} "-o" "[[OUT:[^"]*]]"
+// RDC: {{"[^"]*clang[^"]*".* "-emit-llvm-bc".* "-fcuda-is-device".* "-fsanitize=address".*}} "-o" "[[OUT:[^"]*]]"
+// RDC-NOT: asanrtl.bc
 // RDC: {{"[^"]*clang[^"]*".* "-triple" "x86_64-unknown-linux-gnu".* "-fsanitize=address"}}
 
 // FAIL: error: cannot find ROCm device library for ABI version 5; provide its path via '--rocm-path' or '--rocm-device-lib-path', or pass '-nogpulib' to build without ROCm device library
@@ -118,7 +120,7 @@
 // XNACK: warning: ignoring 'leak' in '-fsanitize=leak' option as it is not currently supported for target 'amdgpu-amd-amdhsa'
 // XNACK: warning: ignoring '-fsanitize=address' option for offload arch 'gfx900:xnack-' as it is not currently supported there. Use it with an offload arch containing 'xnack+' instead
 // XNACK: warning: ignoring '-fsanitize=address' option for offload arch 'gfx906' as it is not currently supported there. Use it with an offload arch containing 'xnack+' instead
-// XNACK-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.00.* "-mlink-bitcode-file" ".*asanrtl.bc".* "-mxnack".* "-fsanitize=address"}}
+// XNACK-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.00.* "-mxnack".* "-fsanitize=address"}}
 // XNACK-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.00.* "-mno-xnack"}}
 // XNACK-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.06}}
 // XNACK-DAG: {{"[^"]*clang[^"]*".* "-triple" "x86_64-unknown-linux-gnu".* "-fsanitize=address,leak"}}
@@ -152,7 +154,7 @@
 
 // INVALIDCOMBINATION1-DAG: warning: ignoring 'fuzzer' in '-fsanitize=address,fuzzer' option as it is not currently supported for target 'amdgpu-amd-amdhsa' [-Woption-ignored]
 // INVALIDCOMBINATION2-DAG: warning: ignoring 'fuzzer' in '-fsanitize=fuzzer,address' option as it is not currently supported for target 'amdgpu-amd-amdhsa' [-Woption-ignored]
-// INVALIDCOMBINATION-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.00.* "-mlink-bitcode-file" ".*asanrtl.bc".* "-mxnack".* "-fsanitize=address"}}
+// INVALIDCOMBINATION-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.00.* "-mxnack".* "-fsanitize=address"}}
 // INVALIDCOMBINATION-DAG: {{"[^"]*clang[^"]*".* "-triple" "x86_64-unknown-linux-gnu".* "-fsanitize=address,fuzzer,fuzzer-no-link"}}
 
 // MULT1: warning: ignoring 'leak' in '-fsanitize=leak' option as it is not currently supported for target 'amdgpu-amd-amdhsa' [-Woption-ignored]
@@ -165,7 +167,7 @@
 // MULT2: warning: ignoring 'fuzzer' in '-fsanitize=fuzzer,address' option as it is not currently supported for target 'amdgpu-amd-amdhsa' [-Woption-ignored]
 // MULT2: warning: ignoring '-fsanitize=fuzzer,address' option for offload arch 'gfx908:xnack-' as it is not currently supported there. Use it with an offload arch containing 'xnack+' instead [-Woption-ignored]
 
-// XNACK2-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.00.* "-mlink-bitcode-file" ".*asanrtl.bc".* "-mxnack".* "-fsanitize=address"}}
+// XNACK2-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.00.* "-mxnack".* "-fsanitize=address"}}
 // XNACK2-DAG: {{"[^"]*clang[^"]*".* "-triple" "amdgpu9.08}}
 // XNACK2-DAG: {{"[^"]*clang[^"]*".* "-triple" "x86_64-unknown-linux-gnu".* "-fsanitize=address,fuzzer,fuzzer-no-link,leak"}}
 

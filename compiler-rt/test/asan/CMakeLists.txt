@@ -3,6 +3,34 @@ set(ASAN_LIT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ASAN_TESTSUITES)
 set(ASAN_DYNAMIC_TESTSUITES)
 
+set(COMPILER_RT_ASAN_CAN_RUN_HIP FALSE)
+set(ASAN_GPU_ARCH "")
+set(ASAN_HIP_LIB_DIR "")
+
+if(LLVM_RUNTIMES_BUILD AND COMPILER_RT_TEST_COMPILER_ID MATCHES "Clang")
+  find_program(ASAN_OFFLOAD_ARCH offload-arch PATHS ${LLVM_TOOLS_BINARY_DIR})
+  if(ASAN_OFFLOAD_ARCH)
+    execute_process(COMMAND ${ASAN_OFFLOAD_ARCH} --only=amdgpu
+                    OUTPUT_VARIABLE _asan_amdgpu_archs
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    string(REPLACE "\n" ";" _asan_amdgpu_archs "${_asan_amdgpu_archs}")
+    if(_asan_amdgpu_archs)
+      list(GET _asan_amdgpu_archs 0 ASAN_GPU_ARCH)
+    endif()
+  endif()
+
+  if(ASAN_GPU_ARCH)
+    find_library(ASAN_TEST_HIP_LIBRARY NAMES amdhip64
+      HINTS "$ENV{ROCM_PATH}/lib" "$ENV{HIP_PATH}/lib" /opt/rocm/lib)
+    if(ASAN_TEST_HIP_LIBRARY)
+      set(COMPILER_RT_ASAN_CAN_RUN_HIP TRUE)
+      get_filename_component(ASAN_HIP_LIB_DIR "${ASAN_TEST_HIP_LIBRARY}" DIRECTORY)
+    endif()
+  endif()
+endif()
+
+pythonize_bool(COMPILER_RT_ASAN_CAN_RUN_HIP)
+
 # Before Windows 8 (CMAKE_SYSTEM_VERSION 6.2), reserving large regions of shadow
 # memory allocated physical memory for page tables, which made it very
 # unreliable. Remove the asan tests from check-all in this configuration.

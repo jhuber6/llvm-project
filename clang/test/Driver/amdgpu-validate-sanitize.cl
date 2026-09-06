@@ -29,8 +29,8 @@
 // RUN:   %s 2>&1 | FileCheck -check-prefix=ERR %s
 
 // CHECK: "-triple" "amdgpu{{[0-9.]+}}-amd-amdhsa"
-// CHECK-SAME: "-mlink-bitcode-file" "{{.*}}asanrtl.bc"
 // CHECK-SAME: "-fsanitize=address"
+// CHECK-NOT: asanrtl.bc
 
 
 // GENERIC: "-fsanitize=alignment,array-bounds,bool,builtin,enum,float-cast-overflow,float-divide-by-zero,function,integer-divide-by-zero,nonnull-attribute,null,nullability-arg,nullability-assign,nullability-return,pointer-overflow,return,returns-nonnull-attribute,shift-base,shift-exponent,signed-integer-overflow,unreachable,vla-bound,unsigned-integer-overflow,unsigned-shift-base,implicit-unsigned-integer-truncation,implicit-signed-integer-truncation,implicit-integer-sign-change,implicit-bitfield-conversion,local-bounds,alloc-token" "-fsanitize-recover=alignment,array-bounds,bool,builtin,enum,float-cast-overflow,float-divide-by-zero,function,integer-divide-by-zero,nonnull-attribute,null,nullability-arg,nullability-assign,nullability-return,pointer-overflow,returns-nonnull-attribute,shift-base,shift-exponent,signed-integer-overflow,vla-bound,unsigned-integer-overflow,unsigned-shift-base,implicit-unsigned-integer-truncation,implicit-signed-integer-truncation,implicit-integer-sign-change,implicit-bitfield-conversion" "-fsanitize-trap=local-bounds" "-fsanitize-merge=alignment,array-bounds,bool,builtin,enum,float-cast-overflow,function,integer-divide-by-zero,nonnull-attribute,null,pointer-overflow,return,returns-nonnull-attribute,shift-base,shift-exponent,signed-integer-overflow,unreachable,vla-bound"

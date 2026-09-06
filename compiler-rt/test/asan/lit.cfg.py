@@ -327,6 +327,43 @@ else:
     config.substitutions.append(("%fPIE", "-fPIE"))
     config.substitutions.append(("%pie", "-pie"))
 
+if getattr(config, "asan_can_run_hip", False):
+    _amdgpu_asan_rt = any(
+        os.path.isfile(
+            os.path.join(
+                config.compiler_rt_output_dir,
+                "lib",
+                triple,
+                "libclang_rt.asan.a",
+            )
+        )
+        for triple in ("amdgpu-amd-amdhsa", "amdgcn-amd-amdhsa")
+    )
+    if _amdgpu_asan_rt:
+        config.available_features.add("asan-hip")
+        hip_common = [
+            "-xhip",
+            "--offload-arch=" + config.asan_gpu_arch,
+            "-nogpuinc",
+            "-nogpulib",
+            "-g",
+            "-isystem",
+            os.path.join(config.test_source_root, "Inputs"),
+            "-include",
+            "hip.h",
+            "-fsanitize=address",
+        ]
+        hip_libs = [
+            "-L" + config.asan_hip_lib_dir,
+            "-lamdhip64",
+            "-Wl,-rpath," + config.asan_hip_lib_dir,
+        ]
+        config.substitutions.append(
+            ("%clang_asan_hip ", build_invocation(hip_common) + " ")
+        )
+        config.substitutions.append(("%hip_libs", " ".join(hip_libs)))
+        lit_config.parallelism_groups["gpu"] = 1
+
 # Only run the tests on supported OSs.
 if config.target_os not in ["Linux", "Darwin", "FreeBSD", "SunOS", "Windows", "NetBSD"]:
     config.unsupported = True

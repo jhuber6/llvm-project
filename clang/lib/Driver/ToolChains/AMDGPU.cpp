@@ -1144,16 +1144,9 @@ RocmInstallationDetector::getCommonBitcodeLibs(
       BCLibs.emplace_back(BCLib);
     }
   };
-  auto AddSanBCLibs = [&]() {
-    if (Pref.GPUSan)
-      AddBCLib(getAsanRTLPath(), false);
-  };
 
-  AddSanBCLibs();
   AddBCLib(getOCMLPath());
   if (!Pref.IsOpenMP)
-    AddBCLib(getOCKLPath());
-  else if (Pref.GPUSan && Pref.IsOpenMP)
     AddBCLib(getOCKLPath());
   AddBCLib(getUnsafeMathPath(Pref.UnsafeMathOpt || Pref.FastRelaxedMath));
   AddBCLib(getFiniteOnlyPath(Pref.FiniteOnly || Pref.FastRelaxedMath));

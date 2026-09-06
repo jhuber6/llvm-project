@@ -963,8 +963,7 @@ AMDGPUTargetMachine::createMachineScheduler(MachineSchedContext *C) const {
 /// Predicate for Internalize pass.
 static bool mustPreserveGV(const GlobalValue &GV) {
   if (const Function *F = dyn_cast<Function>(&GV))
-    return F->isDeclaration() || F->getName().starts_with("__asan_") ||
-           F->getName().starts_with("__sanitizer_") ||
+    return F->isDeclaration() ||
            AMDGPU::isEntryFunctionCC(F->getCallingConv());
 
   GV.removeDeadConstantUsers();

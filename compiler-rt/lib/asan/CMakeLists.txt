@@ -1,5 +1,40 @@
 # Build for the AddressSanitizer runtime support library.
 
+# GPU targets only need the handler shims. The host interceptor archive is
+# built in the offload/ project.
+if(COMPILER_RT_GPU_BUILD)
+  include(FindLibcCommonUtils)
+  if(NOT TARGET llvm-libc-common-utilities)
+    add_compiler_rt_component(asan)
+    return()
+  endif()
+
+  include_directories(.)
+  include_directories(..)
+  include_directories(../../include)
+
+  set(ASAN_SOURCES asan_offload.cpp)
+  set(ASAN_HEADERS asan_offload_packet.h)
+
+  set(ASAN_OFFLOAD_CFLAGS
+    ${SANITIZER_COMMON_CFLAGS}
+    -DSANITIZER_COMMON_NO_REDEFINE_BUILTINS)
+  append_rtti_flag(OFF ASAN_OFFLOAD_CFLAGS)
+
+  add_compiler_rt_component(asan)
+
+  add_compiler_rt_runtime(clang_rt.asan
+    STATIC
+    ARCHS ${ASAN_SUPPORTED_ARCH}
+    SOURCES ${ASAN_SOURCES}
+    ADDITIONAL_HEADERS ${ASAN_HEADERS}
+    CFLAGS ${ASAN_OFFLOAD_CFLAGS}
+    LINK_LIBS llvm-libc-common-utilities
+    PARENT_TARGET asan)
+
+  return()
+endif()
+
 set(ASAN_SOURCES
   asan_aix.cpp
   asan_allocator.cpp
@@ -486,6 +521,11 @@ if ("${CMAKE_SYSTEM_NAME}" MATCHES "AIX")
 endif()
 
 add_subdirectory(scripts)
+
+# Thin host interceptors for offloading. Linked with -u to keep it separate.
+if(OS_NAME MATCHES "Linux" AND NOT ANDROID)
+  add_subdirectory(offload)
+endif()
 
 if(COMPILER_RT_INCLUDE_TESTS)
   add_subdirectory(tests)

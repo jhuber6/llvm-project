@@ -1696,6 +1696,31 @@ static bool hostNeedsUbsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
   return false;
 }
 
+static bool hostNeedsAsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
+  if (HostTC.getTriple().isGPU())
+    return false;
+
+  static constexpr Action::OffloadKind Kinds[] = {
+      Action::OFK_Cuda, Action::OFK_OpenMP, Action::OFK_HIP, Action::OFK_SYCL};
+  for (Action::OffloadKind Kind : Kinds) {
+    for (const auto &Entry : llvm::make_range(C.getOffloadToolChains(Kind))) {
+      const ToolChain *DevTC = Entry.second;
+      const llvm::Triple &TT = DevTC->getTriple();
+      if (!TT.isAMDGCN() || TT.getOS() != llvm::Triple::AMDHSA)
+        continue;
+
+      for (BoundArch BA :
+           C.getDriver().getOffloadArchs(C, C.getArgs(), Kind, *DevTC)) {
+        const ArgList &DevArgs = C.getArgsForToolChain(DevTC, BA, Kind);
+        SanitizerArgs DevSan = DevTC->getSanitizerArgs(DevArgs, BA, Kind);
+        if (DevSan.needsAsanRt())
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
 static void
 collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
                          const ArgList &Args,
@@ -1707,10 +1732,13 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
   assert(!TC.getTriple().isOSDarwin() && "it's not used by Darwin");
   const SanitizerArgs &SanArgs = TC.getSanitizerArgs(Args);
   const bool NeedsOffloadRt = hostNeedsUbsanOffloadRt(C, TC);
+  const bool NeedsAsanOffloadRt = hostNeedsAsanOffloadRt(C, TC);
   const bool NeedsUbsanRt = SanArgs.needsUbsanRt() || NeedsOffloadRt;
+  const bool NeedsAsanRt = SanArgs.needsAsanRt() || NeedsAsanOffloadRt;
+  const bool IsGPU = TC.getTriple().isGPU();
   // Collect shared runtimes.
   if (SanArgs.needsSharedRt()) {
-    if (SanArgs.needsAsanRt()) {
+    if (NeedsAsanRt) {
       SharedRuntimes.push_back("asan");
       if (!Args.hasArg(options::OPT_shared) && !TC.getTriple().isAndroid())
         HelperStaticRuntimes.push_back("asan-preinit");
@@ -1752,7 +1780,7 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
     StaticRuntimes.push_back("stats_client");
 
   // Always link the static runtime regardless of DSO or executable.
-  if (SanArgs.needsAsanRt())
+  if (NeedsAsanRt && !IsGPU)
     HelperStaticRuntimes.push_back("asan_static");
 
   // Offloading images can live in DSOs, the host interceptors must follow.
@@ -1760,21 +1788,28 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
     NonWholeStaticRuntimes.push_back("ubsan_offload");
     RequiredSymbols.push_back("__ubsan_offload_init");
   }
+  if (NeedsAsanOffloadRt) {
+    NonWholeStaticRuntimes.push_back("asan_offload");
+    RequiredSymbols.push_back("__asan_offload_init");
+  }
 
   // Collect static runtimes.
   if (Args.hasArg(options::OPT_shared)) {
     // Don't link static runtimes into DSOs.
     if (NeedsOffloadRt && !SanArgs.needsSharedRt() && !SanArgs.needsUbsanRt())
       StaticRuntimes.push_back("ubsan_standalone");
+    if (NeedsAsanOffloadRt && !SanArgs.needsSharedRt() &&
+        !SanArgs.needsAsanRt())
+      StaticRuntimes.push_back("asan");
     return;
   }
 
   // Each static runtime that has a DSO counterpart above is excluded below,
   // but runtimes that exist only as static are not affected by needsSharedRt.
 
-  if (!SanArgs.needsSharedRt() && SanArgs.needsAsanRt()) {
+  if (!SanArgs.needsSharedRt() && NeedsAsanRt) {
     StaticRuntimes.push_back("asan");
-    if (SanArgs.linkCXXRuntimes())
+    if (SanArgs.linkCXXRuntimes() && !IsGPU)
       StaticRuntimes.push_back("asan_cxx");
   }
 

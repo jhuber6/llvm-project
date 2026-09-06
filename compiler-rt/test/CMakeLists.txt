@@ -151,6 +151,10 @@ if(COMPILER_RT_CAN_EXECUTE_TESTS)
     endif()
 
     foreach(sanitizer ${COMPILER_RT_SANITIZERS_TO_BUILD})
+      # GPU ASan/UBSan tests live in the host compiler-rt test tree.
+      if(COMPILER_RT_GPU_BUILD AND sanitizer MATCHES "^(asan|ubsan)$")
+        continue()
+      endif()
       compiler_rt_test_runtime(${sanitizer})
     endforeach()
   endif()
