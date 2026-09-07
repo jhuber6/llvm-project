@@ -130,7 +130,10 @@ bool Hsa::Discover() {
         if (hsa_status_t S = Api.hsa_amd_memory_pool_get_info(
                 Pool, HSA_AMD_MEMORY_POOL_INFO_GLOBAL_FLAGS, &Flags))
           return S;
-        if (Flags & HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED)
+        // Kernarg pools are also fine grained but are a scarce resource that
+        // the runtime manages itself.
+        if ((Flags & HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED) &&
+            !(Flags & HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_KERNARG_INIT))
           FineGrainedPool = Pool;
         return HSA_STATUS_SUCCESS;
       }));
@@ -191,9 +194,12 @@ bool Hsa::DropRef() {
 bool Hsa::Init() {
   if (atomic_load(&Active, memory_order_acquire))
     return true;
+  // Losing the HSA entry points only costs device reporting, so leave the
+  // program running rather than killing it.
   if (!Resolve()) {
-    Report("ERROR: %s: cannot resolve HSA\n", SanitizerToolName);
-    Die();
+    VReport(1, "%s: cannot resolve HSA, device reporting disabled\n",
+            SanitizerToolName);
+    return false;
   }
   if (!Discover())
     return false;
@@ -207,13 +213,12 @@ bool Hsa::Init() {
   return true;
 }
 
-// Clear the tracked state on HSA shut down.
+// Clear the tracked state on HSA shut down. Called under HsaLifecycleMutex, so
+// no concurrent Init() can rebuild what this tears down.
 void Hsa::Shutdown() {
   atomic_store(&Active, 0, memory_order_release);
   StopRpc();
   Lock L(&AsanOffloadMutex);
-  if (Refs)
-    return;
   ForgetDeviceImages();
   Executables.clear();
   if (Doorbell.handle) {
@@ -226,6 +231,7 @@ void Hsa::Shutdown() {
   Loader = {};
   Agents.clear();
   Devices.clear();
+  Pools.clear();
   FineGrainedPool = {};
 }
 
@@ -307,6 +313,29 @@ bool Hsa::AllocFineGrained(uptr Bytes, void **Out) {
 }
 
 void Hsa::Free(void *P) { Api.hsa_amd_memory_pool_free(P); }
+
+// Redzones may only be added to plain global allocations. Kernarg and any
+// non-global segment carry runtime layout requirements that a shifted user
+// pointer would break.
+bool Hsa::PoolTakesRedzones(hsa_amd_memory_pool_t Pool) {
+  for (uptr I = 0; I < Pools.size(); ++I)
+    if (Pools[I].Handle == Pool.handle)
+      return Pools[I].Redzones;
+
+  hsa_amd_segment_t Seg;
+  u32 Flags = 0;
+  bool Ok = Api.hsa_amd_memory_pool_get_info(
+                Pool, HSA_AMD_MEMORY_POOL_INFO_SEGMENT, &Seg) ==
+                HSA_STATUS_SUCCESS &&
+            Seg == HSA_AMD_SEGMENT_GLOBAL &&
+            Api.hsa_amd_memory_pool_get_info(
+                Pool, HSA_AMD_MEMORY_POOL_INFO_GLOBAL_FLAGS, &Flags) ==
+                HSA_STATUS_SUCCESS &&
+            !(Flags & HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_KERNARG_INIT);
+  PoolInfo Info = {Pool.handle, Ok};
+  Pools.push_back(Info);
+  return Ok;
+}
 
 bool Hsa::Copy(void *Dst, const void *Src, uptr N) {
   return Api.hsa_memory_copy(Dst, Src, N) == HSA_STATUS_SUCCESS;

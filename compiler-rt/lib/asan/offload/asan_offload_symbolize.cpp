@@ -8,6 +8,8 @@
 
 #include "asan_offload_symbolize.h"
 
+#include "asan_offload_globals.h"
+
 #include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_file.h"
 #include "sanitizer_common/sanitizer_libc.h"
@@ -44,8 +46,11 @@ void Drop(uptr I) {
   DeviceImage &Img = Images[I];
   if (Img.Path[0])
     internal_unlink(Img.Path);
-  if (Img.Bytes)
+  if (Img.Bytes) {
+    PoisonDeviceGlobals(Img.LoadBase, Img.Bytes, Img.BytesSize,
+                        /*Poison=*/false);
     UnmapOrDie(Img.Bytes, Img.BytesSize);
+  }
   if (I + 1 != Images.size())
     Images[I] = Images.back();
   Images.pop_back();
@@ -98,6 +103,10 @@ void TrackDeviceImage(uptr LoadBase, uptr LoadSize, const void *Storage,
     Img.BytesSize = StorageSize;
   }
   Images.push_back(Img);
+  VReport(2, "%s: device image [0x%zx,0x%zx)\n", SanitizerToolName, LoadBase,
+          LoadBase + LoadSize);
+  if (Img.Bytes)
+    PoisonDeviceGlobals(LoadBase, Img.Bytes, Img.BytesSize, /*Poison=*/true);
 }
 
 void ForgetDeviceImage(uptr LoadBase) {
@@ -143,6 +152,17 @@ SymbolizedStack *SymbolizeOffloadPc(uptr PC) {
   for (SymbolizedStack *F = Frames; F; F = F->next)
     F->info.address = PC;
   return Frames;
+}
+
+bool FindOffloadGlobal(uptr Addr, DeviceGlobalInfo *Out) {
+  if (!Addr || !Out)
+    return false;
+
+  Lock L(&ImageMutex);
+  DeviceImage *Img = ImageFor(Addr);
+  if (!Img || !Img->Bytes)
+    return false;
+  return FindDeviceGlobal(Img->LoadBase, Img->Bytes, Img->BytesSize, Addr, Out);
 }
 
 } // namespace __asan

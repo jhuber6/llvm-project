@@ -5,6 +5,12 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+//
+// Interception of the HSA allocation and copy entry points. Memory the runtime
+// hands to the device gets the same redzones and shadow encoding as host
+// memory, so both halves of the sanitizer agree on every allocation.
+//
+//===----------------------------------------------------------------------===//
 
 #include <dlfcn.h>
 #include <stddef.h>
@@ -25,6 +31,7 @@
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_mutex.h"
 #include "sanitizer_common/sanitizer_platform.h"
+#include "sanitizer_common/sanitizer_stackdepot.h"
 
 #if !SANITIZER_LINUX
 #error "Offload ASan reporting is supported on Linux only"
@@ -40,6 +47,7 @@ using namespace __asan;
 namespace __asan {
 
 Mutex AsanOffloadMutex;
+Mutex HsaLifecycleMutex;
 
 static StaticSpinMutex InitMutex;
 static atomic_uint8_t Initialized;
@@ -82,42 +90,126 @@ void Initialize() {
   X(hsa_executable_destroy)                                                    \
   X(hsa_amd_memory_pool_allocate)                                              \
   X(hsa_amd_memory_pool_free)                                                  \
+  X(hsa_memory_free)                                                           \
   X(hsa_amd_agents_allow_access)                                               \
   X(hsa_amd_pointer_info)                                                      \
   X(hsa_memory_copy)                                                           \
-  X(hsa_amd_memory_async_copy)
+  X(hsa_amd_memory_async_copy)                                                 \
+  X(hsa_amd_memory_async_copy_on_engine)
 
-static constexpr uptr kOffloadRedzone = 32;
+// A page keeps the alignment the memory pool promised its callers; the runtime
+// and its clients rely on allocations being page aligned.
+static constexpr uptr kOffloadRedzone = 4096;
 
 struct DeviceAlloc {
   uptr Raw;
+  uptr Total;
   uptr User;
   uptr Size;
-  uptr Pc;
+  u32 AllocStack;
+  u32 FreeStack;
+  RegionOrigin Origin;
+  // False when the block sits outside the shadow's reach, in which case it is
+  // tracked for pointer translation but carries no redzones.
+  bool Shadowed;
 };
 
+// Device memory normally falls in the same range as any other mapping, but a
+// block outside it has no shadow to poison and must be left alone.
+static bool CanShadow(uptr Beg, uptr Size) {
+  return AddrIsInMem(Beg) && AddrIsInMem(Beg + Size - 1);
+}
+
 static InternalMmapVectorNoCtor<DeviceAlloc> Allocs;
+
+// Freed allocations are remembered so a use-after-free can name the region and
+// the code that released it. Only metadata is held; the memory itself goes back
+// to the runtime immediately.
+static constexpr uptr kFreedHistory = 256;
+static InternalMmapVectorNoCtor<DeviceAlloc> Freed;
+static uptr FreedNext;
 
 static DeviceAlloc *FindAlloc(uptr Ptr) {
   for (uptr I = 0; I < Allocs.size(); ++I) {
     DeviceAlloc &A = Allocs[I];
-    uptr End = A.User + RoundUpTo(A.Size, 8) + kOffloadRedzone;
-    if (Ptr >= A.Raw && Ptr < End)
+    if (Ptr >= A.Raw && Ptr < A.Raw + A.Total)
       return &A;
   }
   return nullptr;
 }
 
-static void RecordAlloc(uptr Raw, uptr User, uptr Size, uptr Pc) {
-  DeviceAlloc A = {Raw, User, Size, Pc};
-  Allocs.push_back(A);
-}
+static void RecordAlloc(const DeviceAlloc &A) { Allocs.push_back(A); }
 
 static void ForgetAlloc(DeviceAlloc *A) {
   uptr I = A - Allocs.data();
   if (I + 1 != Allocs.size())
     Allocs[I] = Allocs.back();
   Allocs.pop_back();
+}
+
+static void RememberFreed(const DeviceAlloc &A) {
+  if (Freed.size() < kFreedHistory) {
+    Freed.push_back(A);
+    return;
+  }
+  Freed[FreedNext] = A;
+  FreedNext = (FreedNext + 1) % kFreedHistory;
+}
+
+void __asan::RecordDeviceHeap(uptr Base, uptr Size) {
+  DeviceAlloc A = {};
+  A.Raw = Base;
+  A.Total = Size;
+  A.Origin = kRegionDevice;
+  Lock L(&AsanOffloadMutex);
+  RecordAlloc(A);
+}
+
+// Fills in the user extent of a device allocation from the header the device
+// allocator keeps in the left redzone. Only valid while the block is still
+// mapped, so the result is cached before the memory goes back to the runtime.
+static void ResolveDeviceBlock(DeviceAlloc &A) {
+  A.User = A.Raw + ASAN_OFFLOAD_BLOCK_REDZONE;
+  auto *B = reinterpret_cast<__asan_offload_block *>(A.Raw);
+  A.Size = B->magic == ASAN_OFFLOAD_BLOCK_MAGIC ? B->size : 0;
+}
+
+void __asan::ForgetDeviceHeap(uptr Base) {
+  Lock L(&AsanOffloadMutex);
+  if (DeviceAlloc *A = FindAlloc(Base)) {
+    DeviceAlloc Gone = *A;
+    ResolveDeviceBlock(Gone);
+    ForgetAlloc(A);
+    RememberFreed(Gone);
+  }
+}
+
+bool __asan::FindOffloadRegion(uptr Addr, OffloadRegion *Out) {
+  Lock L(&AsanOffloadMutex);
+  DeviceAlloc Hit;
+  if (DeviceAlloc *A = FindAlloc(Addr)) {
+    Hit = *A;
+    if (Hit.Origin == kRegionDevice)
+      ResolveDeviceBlock(Hit);
+  } else {
+    bool Found = false;
+    for (uptr I = 0; I < Freed.size(); ++I) {
+      if (Addr >= Freed[I].Raw && Addr < Freed[I].Raw + Freed[I].Total) {
+        Hit = Freed[I];
+        Found = true;
+        break;
+      }
+    }
+    if (!Found)
+      return false;
+  }
+
+  Out->Beg = Hit.User;
+  Out->Size = Hit.Size;
+  Out->AllocStack = Hit.AllocStack;
+  Out->FreeStack = Hit.FreeStack;
+  Out->Origin = Hit.Origin;
+  return true;
 }
 
 static void *WrapperFor(const char *Name) {
@@ -138,9 +230,13 @@ static bool FromHsa(void *P) {
 
 static void BindRealDlsym();
 
+// Deliberately does not call Initialize(): ASan's own start up resolves its
+// interceptors through 'dlsym', so doing so would re-enter initialization and
+// hang before the process ever reaches main.
 INTERCEPTOR(void *, dlsym, void *Handle, const char *Name) {
-  Initialize();
   BindRealDlsym();
+  if (UNLIKELY(!REAL(dlsym)))
+    return nullptr;
 
   if (Handle == RTLD_NEXT) [[clang::musttail]]
     return REAL(dlsym)(Handle, Name);
@@ -159,6 +255,8 @@ static void BindRealDlsym() {
   if (LIKELY(REAL(dlsym)))
     return;
 #if SANITIZER_GLIBC
+  // The unversioned symbol resolves back to this interceptor, so the real one
+  // has to be found through its version.
   static const char *kVers[] = {"GLIBC_2.34", "GLIBC_2.17", "GLIBC_2.2.5",
                                 "GLIBC_2.0"};
   if (dlvsym) {
@@ -170,8 +268,11 @@ static void BindRealDlsym() {
     }
   }
 #endif
-  Report("ERROR: %s: cannot bind dlsym\n", SanitizerToolName);
-  Die();
+  // Without a versioned lookup there is no way to reach the real 'dlsym'.
+  // Interception of HSA through 'dlsym' is lost, but direct linking still
+  // works, so this is not fatal.
+  VReport(1, "%s: cannot bind dlsym, only linked HSA calls are intercepted\n",
+          SanitizerToolName);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_init, void) {
@@ -181,7 +282,7 @@ INTERCEPTOR(hsa_status_t, hsa_init, void) {
   if (Status != HSA_STATUS_SUCCESS)
     return Status;
 
-  Lock L(&AsanOffloadMutex);
+  Lock L(&HsaLifecycleMutex);
   if (GetHsa().AddRef())
     GetHsa().Init();
   return Status;
@@ -190,13 +291,11 @@ INTERCEPTOR(hsa_status_t, hsa_init, void) {
 INTERCEPTOR(hsa_status_t, hsa_shut_down, void) {
   ASAN_HSA_ENTER(hsa_shut_down);
 
-  bool Last;
   {
-    Lock L(&AsanOffloadMutex);
-    Last = GetHsa().DropRef();
+    Lock L(&HsaLifecycleMutex);
+    if (GetHsa().DropRef())
+      GetHsa().Shutdown();
   }
-  if (Last)
-    GetHsa().Shutdown();
   return REAL(hsa_shut_down)();
 }
 
@@ -227,17 +326,34 @@ INTERCEPTOR(hsa_status_t, hsa_executable_destroy, hsa_executable_t Executable) {
   return REAL(hsa_executable_destroy)(Executable);
 }
 
+// Lays out redzones around a freshly allocated block exactly as the host
+// allocator does, so the shadow byte legend and bug naming carry over.
+static void PoisonBlock(uptr Raw, uptr Total, uptr User, uptr Size) {
+  uptr UserEnd = User + Size;
+  uptr EndAlignedDown = RoundDownTo(UserEnd, ASAN_SHADOW_GRANULARITY);
+  PoisonShadow(Raw, User - Raw, kAsanHeapLeftRedzoneMagic);
+  PoisonShadow(User, EndAlignedDown - User, 0);
+  FastPoisonShadowPartialRightRedzone(EndAlignedDown,
+                                      UserEnd - EndAlignedDown,
+                                      Raw + Total - EndAlignedDown,
+                                      kAsanHeapLeftRedzoneMagic);
+}
+
 INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_allocate,
             hsa_amd_memory_pool_t Pool, size_t Size, uint32_t Flags,
             void **Ptr) {
-  ASAN_HSA_ENTER(hsa_amd_memory_pool_allocate);
-  AsanInitFromRtl();
-  if (!Ptr)
+  ASAN_HSA_FORWARD(hsa_amd_memory_pool_allocate, Pool, Size, Flags, Ptr);
+  bool Redzoned;
+  {
+    Lock L(&AsanOffloadMutex);
+    Redzoned = GetHsa().PoolTakesRedzones(Pool);
+  }
+  if (!Ptr || !Size || !Redzoned)
     return REAL(hsa_amd_memory_pool_allocate)(Pool, Size, Flags, Ptr);
   if (Size > ~(size_t)0 - 2 * kOffloadRedzone)
     return HSA_STATUS_ERROR;
 
-  uptr User = RoundUpTo(Size, 8);
+  uptr User = RoundUpTo(Size, ASAN_SHADOW_GRANULARITY);
   uptr Total = kOffloadRedzone + User + kOffloadRedzone;
   void *Raw = nullptr;
   hsa_status_t Status =
@@ -245,50 +361,80 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_allocate,
   if (Status != HSA_STATUS_SUCCESS || !Raw)
     return Status;
 
-  uptr UserPtr = reinterpret_cast<uptr>(Raw) + kOffloadRedzone;
-  PoisonShadow(reinterpret_cast<uptr>(Raw), kOffloadRedzone,
-               kAsanHeapLeftRedzoneMagic);
-  PoisonShadow(UserPtr, User, 0);
-  PoisonShadow(UserPtr + User, kOffloadRedzone, kAsanHeapLeftRedzoneMagic);
-  if (User != Size)
-    PoisonShadow(UserPtr + Size, User - Size, kAsanHeapLeftRedzoneMagic);
+  uptr RawAddr = reinterpret_cast<uptr>(Raw);
+  uptr UserPtr = RawAddr + kOffloadRedzone;
+  bool Shadowed = CanShadow(RawAddr, Total);
+  if (Shadowed)
+    PoisonBlock(RawAddr, Total, UserPtr, Size);
+  else
+    VReport(1, "%s: allocation at 0x%zx has no shadow, left unpoisoned\n",
+            SanitizerToolName, RawAddr);
+
+  GET_STACK_TRACE_MALLOC;
+  DeviceAlloc A = {};
+  A.Raw = RawAddr;
+  A.Total = Total;
+  A.User = UserPtr;
+  A.Size = Size;
+  A.AllocStack = StackDepotPut(stack);
+  A.Origin = kRegionHost;
+  A.Shadowed = Shadowed;
   {
     Lock L(&AsanOffloadMutex);
-    RecordAlloc(reinterpret_cast<uptr>(Raw), UserPtr, Size,
-                GET_CALLER_PC());
+    RecordAlloc(A);
   }
   *Ptr = reinterpret_cast<void *>(UserPtr);
   return Status;
 }
 
+// Shared by the two runtime entry points that release pool memory.
+static bool ReleaseBlock(void *Ptr, void **Raw, BufferedStackTrace *Stack) {
+  DeviceAlloc A;
+  {
+    Lock L(&AsanOffloadMutex);
+    DeviceAlloc *Hit = FindAlloc(reinterpret_cast<uptr>(Ptr));
+    if (!Hit || Hit->Origin != kRegionHost)
+      return false;
+    A = *Hit;
+    A.FreeStack = StackDepotPut(*Stack);
+    ForgetAlloc(Hit);
+    RememberFreed(A);
+  }
+  if (A.Shadowed)
+    PoisonShadow(A.Raw, A.Total, kAsanHeapFreeMagic);
+  *Raw = reinterpret_cast<void *>(A.Raw);
+  return true;
+}
+
 INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_free, void *Ptr) {
-  ASAN_HSA_ENTER(hsa_amd_memory_pool_free);
-  AsanInitFromRtl();
+  ASAN_HSA_FORWARD(hsa_amd_memory_pool_free, Ptr);
   if (!Ptr)
     return REAL(hsa_amd_memory_pool_free)(Ptr);
 
-  DeviceAlloc A;
-  bool Found = false;
-  {
-    Lock L(&AsanOffloadMutex);
-    if (DeviceAlloc *Hit = FindAlloc(reinterpret_cast<uptr>(Ptr))) {
-      A = *Hit;
-      ForgetAlloc(Hit);
-      Found = true;
-    }
-  }
-  if (!Found)
+  GET_STACK_TRACE_FREE;
+  void *Raw = nullptr;
+  if (!ReleaseBlock(Ptr, &Raw, &stack))
     return REAL(hsa_amd_memory_pool_free)(Ptr);
+  return REAL(hsa_amd_memory_pool_free)(Raw);
+}
 
-  uptr User = RoundUpTo(A.Size, 8);
-  PoisonShadow(A.Raw, kOffloadRedzone + User + kOffloadRedzone,
-               kAsanHeapFreeMagic);
-  return REAL(hsa_amd_memory_pool_free)(reinterpret_cast<void *>(A.Raw));
+// The legacy allocation interface frees pool memory too, so a shifted pointer
+// reaching it has to be translated back or the runtime rejects it.
+INTERCEPTOR(hsa_status_t, hsa_memory_free, void *Ptr) {
+  ASAN_HSA_FORWARD(hsa_memory_free, Ptr);
+  if (!Ptr)
+    return REAL(hsa_memory_free)(Ptr);
+
+  GET_STACK_TRACE_FREE;
+  void *Raw = nullptr;
+  if (!ReleaseBlock(Ptr, &Raw, &stack))
+    return REAL(hsa_memory_free)(Ptr);
+  return REAL(hsa_memory_free)(Raw);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_amd_agents_allow_access, uint32_t NumAgents,
             const hsa_agent_t *Agents, const uint32_t *Flags, const void *Ptr) {
-  ASAN_HSA_ENTER(hsa_amd_agents_allow_access);
+  ASAN_HSA_FORWARD(hsa_amd_agents_allow_access, NumAgents, Agents, Flags, Ptr);
   {
     Lock L(&AsanOffloadMutex);
     if (DeviceAlloc *A = FindAlloc(reinterpret_cast<uptr>(Ptr)))
@@ -300,7 +446,8 @@ INTERCEPTOR(hsa_status_t, hsa_amd_agents_allow_access, uint32_t NumAgents,
 INTERCEPTOR(hsa_status_t, hsa_amd_pointer_info, const void *Ptr,
             hsa_amd_pointer_info_t *Info, void *(*Alloc)(size_t),
             uint32_t *NumAccessible, hsa_agent_t **Accessible) {
-  ASAN_HSA_ENTER(hsa_amd_pointer_info);
+  ASAN_HSA_FORWARD(hsa_amd_pointer_info, Ptr, Info, Alloc, NumAccessible,
+                   Accessible);
   DeviceAlloc Hit;
   bool Found = false;
   {
@@ -315,6 +462,7 @@ INTERCEPTOR(hsa_status_t, hsa_amd_pointer_info, const void *Ptr,
       REAL(hsa_amd_pointer_info)(Query, Info, Alloc, NumAccessible, Accessible);
   if (Status != HSA_STATUS_SUCCESS || !Found || !Info)
     return Status;
+  // Report the user extent rather than the block the redzones live in.
   if (Info->size >= offsetof(hsa_amd_pointer_info_t, sizeInBytes) +
                         sizeof(Hit.Size)) {
     Info->agentBaseAddress = reinterpret_cast<void *>(Hit.User);
@@ -324,13 +472,24 @@ INTERCEPTOR(hsa_status_t, hsa_amd_pointer_info, const void *Ptr,
   return Status;
 }
 
+// Validates the two ends of a runtime copy. A device pointer can fall outside
+// the shadow's reach, where every byte reads as poisoned, so such a range is
+// left unchecked rather than reported as a wild access.
+static void CheckCopy(const char *Name, void *Dst, const void *Src, uptr Size) {
+  if (!Size)
+    return;
+  AsanInterceptorContext Ctx = {Name};
+  CHECK_RANGES_OVERLAP(Name, Dst, Size, Src, Size);
+  if (CanShadow(reinterpret_cast<uptr>(Src), Size))
+    ASAN_READ_RANGE(&Ctx, Src, Size);
+  if (CanShadow(reinterpret_cast<uptr>(Dst), Size))
+    ASAN_WRITE_RANGE(&Ctx, Dst, Size);
+}
+
 INTERCEPTOR(hsa_status_t, hsa_memory_copy, void *Dst, const void *Src,
             size_t Size) {
   ASAN_HSA_ENTER(hsa_memory_copy);
-  AsanInitFromRtl();
-  AsanInterceptorContext Ctx = {"hsa_memory_copy"};
-  ASAN_READ_RANGE(&Ctx, Src, Size);
-  ASAN_WRITE_RANGE(&Ctx, Dst, Size);
+  CheckCopy("hsa_memory_copy", Dst, Src, Size);
   return REAL(hsa_memory_copy)(Dst, Src, Size);
 }
 
@@ -339,12 +498,19 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_async_copy, void *Dst,
             size_t Size, uint32_t NumDep, const hsa_signal_t *Dep,
             hsa_signal_t Done) {
   ASAN_HSA_ENTER(hsa_amd_memory_async_copy);
-  AsanInitFromRtl();
-  AsanInterceptorContext Ctx = {"hsa_amd_memory_async_copy"};
-  ASAN_READ_RANGE(&Ctx, Src, Size);
-  ASAN_WRITE_RANGE(&Ctx, Dst, Size);
+  CheckCopy("hsa_amd_memory_async_copy", Dst, Src, Size);
   return REAL(hsa_amd_memory_async_copy)(Dst, DstAgent, Src, SrcAgent, Size,
                                          NumDep, Dep, Done);
+}
+
+INTERCEPTOR(hsa_status_t, hsa_amd_memory_async_copy_on_engine, void *Dst,
+            hsa_agent_t DstAgent, const void *Src, hsa_agent_t SrcAgent,
+            size_t Size, uint32_t NumDep, const hsa_signal_t *Dep,
+            hsa_signal_t Done, hsa_amd_sdma_engine_id_t Engine, bool ForceSdma) {
+  ASAN_HSA_ENTER(hsa_amd_memory_async_copy_on_engine);
+  CheckCopy("hsa_amd_memory_async_copy_on_engine", Dst, Src, Size);
+  return REAL(hsa_amd_memory_async_copy_on_engine)(
+      Dst, DstAgent, Src, SrcAgent, Size, NumDep, Dep, Done, Engine, ForceSdma);
 }
 
 extern "C" void __asan_offload_init() { __asan::Initialize(); }

@@ -4,3 +4,5 @@ if "asan-hip" not in config.available_features:
 else:
     config.parallelism_group = "gpu"
     config.suffixes = [".c", ".cpp", ".hip"]
+    # The device reads the host shadow, which only works with page migration.
+    config.environment["HSA_XNACK"] = "1"

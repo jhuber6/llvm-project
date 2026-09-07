@@ -5,6 +5,11 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+//
+// Device half of the offload AddressSanitizer. The shadow encoding matches the
+// host runtime exactly so that both agree on memory allocated by either side.
+//
+//===----------------------------------------------------------------------===//
 
 #include "asan_offload_packet.h"
 
@@ -14,7 +19,9 @@
 #include "shared/rpc_opcodes.h"
 
 using uptr = unsigned long;
+using s8 = signed char;
 using u8 = unsigned char;
+using u32 = unsigned int;
 using u64 = unsigned long long;
 
 [[gnu::visibility("protected"),
@@ -31,51 +38,134 @@ namespace {
 constexpr uptr kScale = 3;
 constexpr uptr kOffset = 0x7fff8000;
 constexpr uptr kGranule = 8;
-constexpr uptr kRedzone = 32;
-constexpr uptr kSlab = 2u << 20;
+constexpr uptr kRedzone = ASAN_OFFLOAD_BLOCK_REDZONE;
+
+// The host uses the left redzone magic on both sides of an allocation, so the
+// shadow byte legend and bug naming stay identical for host and device blocks.
 constexpr u8 kHeapRZ = 0xfa;
 constexpr u8 kHeapFree = 0xfd;
 constexpr u8 kUserPoison = 0xf7;
 constexpr u8 kGlobalRZ = 0xf9;
 
+// Marks a block handed out by the device allocator so that 'free' can reject
+// pointers it never returned.
+constexpr u64 kBlockMagic = ASAN_OFFLOAD_BLOCK_MAGIC;
+
+using Block = __asan_offload_block;
+
 [[gnu::always_inline]] constexpr uptr MemToShadow(uptr Addr) {
   return (Addr >> kScale) + kOffset;
 }
 
-void poison(uptr Addr, uptr Size, u8 Mag) {
+[[gnu::always_inline]] u8 *Shadow(uptr Addr) {
+  return reinterpret_cast<u8 *>(MemToShadow(Addr));
+}
+
+[[gnu::always_inline]] constexpr uptr RoundUp(uptr V, uptr Align) {
+  return (V + Align - 1) & ~(Align - 1);
+}
+
+[[gnu::always_inline]] constexpr uptr RoundDown(uptr V, uptr Align) {
+  return V & ~(Align - 1);
+}
+
+// Mirror of the host's FastPoisonShadow; the range must be granule aligned.
+void poison_aligned(uptr Addr, uptr Size, u8 Mag) {
+  u8 *End = Shadow(Addr + Size);
+  for (u8 *P = Shadow(Addr); P < End; ++P)
+    *P = Mag;
+}
+
+// Mirror of the host's FastPoisonShadowPartialRightRedzone. Covers the tail of
+// an allocation and the redzone behind it in one pass, so a granule that is
+// only partly addressable records the count of good bytes instead of being
+// left fully addressable.
+void poison_right_redzone(uptr Addr, uptr Size, uptr RedzoneSize, u8 Mag) {
+  u8 *S = Shadow(Addr);
+  for (uptr I = 0; I < RedzoneSize; I += kGranule, ++S) {
+    if (I + kGranule <= Size)
+      *S = 0;
+    else if (I >= Size)
+      *S = Mag;
+    else
+      *S = static_cast<u8>(Size - I);
+  }
+}
+
+constexpr s8 Min(s8 A, s8 B) { return A < B ? A : B; }
+constexpr s8 Max(s8 A, s8 B) { return A > B ? A : B; }
+
+// One end of a shadow range, mirroring the host's ShadowSegmentEndpoint. A
+// positive value is the count of addressable bytes in a partial granule; a
+// negative one is a poison magic.
+struct Endpoint {
+  u8 *Chunk;
+  s8 Offset;
+  s8 Value;
+
+  Endpoint(uptr Addr)
+      : Chunk(Shadow(Addr)), Offset(Addr & (kGranule - 1)),
+        Value(static_cast<s8>(*Chunk)) {}
+};
+
+// Mirror of the host's __asan_poison_memory_region for an arbitrary range: a
+// granule that straddles the boundary keeps the smaller addressable count.
+void poison_region(uptr Addr, uptr Size, u8 Mag) {
   if (!Size)
     return;
-  uptr End = Addr + Size;
-  uptr Aligned = (Addr + kGranule - 1) & ~(kGranule - 1);
-  if (Aligned > End)
+  Endpoint B(Addr);
+  Endpoint E(Addr + Size);
+  if (B.Chunk == E.Chunk) {
+    if (B.Value > 0 && B.Value <= E.Offset)
+      *B.Chunk = B.Offset ? Min(B.Value, B.Offset) : Mag;
     return;
-  u8 *Beg = reinterpret_cast<u8 *>(MemToShadow(Aligned));
-  u8 *Last = reinterpret_cast<u8 *>(MemToShadow(End & ~(kGranule - 1)));
-  for (u8 *P = Beg; P < Last; ++P)
+  }
+  if (B.Offset) {
+    *B.Chunk = B.Value == 0 ? B.Offset : Min(B.Value, B.Offset);
+    ++B.Chunk;
+  }
+  for (u8 *P = B.Chunk; P < E.Chunk; ++P)
     *P = Mag;
-  uptr Tail = End & (kGranule - 1);
-  if (Tail)
-    *Last = Mag;
+  if (E.Value > 0 && E.Value <= E.Offset)
+    *E.Chunk = Mag;
+}
+
+// Mirror of the host's __asan_unpoison_memory_region.
+void unpoison_region(uptr Addr, uptr Size) {
+  if (!Size)
+    return;
+  Endpoint B(Addr);
+  Endpoint E(Addr + Size);
+  if (B.Chunk == E.Chunk) {
+    if (B.Value != 0)
+      *B.Chunk = Max(B.Value, E.Offset);
+    return;
+  }
+  for (u8 *P = B.Chunk; P < E.Chunk; ++P)
+    *P = 0;
+  if (E.Offset && E.Value != 0)
+    *E.Chunk = Max(E.Value, E.Offset);
 }
 
 bool poisoned(uptr Addr, uptr Size) {
   if (!Size)
     return false;
   uptr Last = Addr + Size - 1;
-  for (uptr A = Addr & ~(kGranule - 1); A <= Last; A += kGranule) {
-    u8 S = *reinterpret_cast<u8 *>(MemToShadow(A));
+  for (uptr A = RoundDown(Addr, kGranule); A <= Last; A += kGranule) {
+    s8 S = static_cast<s8>(*Shadow(A));
     if (!S)
       continue;
-    if (S >= 128)
+    if (S < 0)
       return true;
-    uptr First = A < Addr ? Addr : A;
     uptr End = A + kGranule - 1 < Last ? A + kGranule : Last + 1;
-    if (First + (End - First) - A > S)
+    if (End - A > static_cast<uptr>(S))
       return true;
   }
   return false;
 }
 
+// The device samples the same static access from thousands of threads, so
+// without this every launch buries the user in duplicates of one bug.
 bool seen(uptr Pc) {
   static constexpr u64 Bits = 6;
   static constexpr u64 Golden = 0x9E3779B97F4A7C15ull;
@@ -86,20 +176,33 @@ bool seen(uptr Pc) {
                                     __MEMORY_SCOPE_DEVICE) == Pc;
 }
 
-void report(uptr Pc, uptr Addr, uptr Size, bool IsWrite, bool Fatal) {
+void report(uptr Pc, uptr Addr, uptr Size, bool IsWrite, bool Fatal,
+            u32 Kind = ASAN_REPORT_ACCESS) {
   if (seen(Pc))
     return;
 
+  __asan_offload_report Rep = {};
+  Rep.pc = static_cast<uint64_t>(Pc);
+  Rep.addr = static_cast<uint64_t>(Addr);
+  Rep.size = static_cast<uint32_t>(Size);
+  Rep.access_type = IsWrite ? ASAN_ACCESS_WRITE : ASAN_ACCESS_READ;
+  for (int I = 0; I < 3; ++I) {
+    Rep.block[I] = __gpu_block_id(I);
+    Rep.thread[I] = static_cast<uint16_t>(__gpu_thread_id(I));
+  }
+  Rep.lane = static_cast<uint8_t>(__gpu_lane_id());
+  Rep.fatal = Fatal;
+  Rep.kind = static_cast<uint8_t>(Kind);
+
+  // Wait for the host to finish printing. The trap that follows a fatal report
+  // otherwise races the runtime's own abort and the report is lost.
   rpc::Client::Port Port =
       __asan_rpc_client.open<ASAN_OFFLOAD_REPORT_OPCODE>();
-  Port.send([&](rpc::Buffer *Buf, uint32_t) {
-    auto &Rep = *reinterpret_cast<__asan_offload_report *>(Buf);
-    Rep.pc = static_cast<uint64_t>(Pc);
-    Rep.addr = static_cast<uint64_t>(Addr);
-    Rep.size = static_cast<uint64_t>(Size);
-    Rep.is_write = IsWrite;
-    Rep.fatal = Fatal;
-  });
+  Port.send_and_recv(
+      [&](rpc::Buffer *Buf, uint32_t) {
+        __builtin_memcpy(Buf->data, &Rep, sizeof(Rep));
+      },
+      [](rpc::Buffer *, uint32_t) {});
 }
 
 void *rpc_allocate(u64 Size) {
@@ -113,62 +216,60 @@ void *rpc_allocate(u64 Size) {
   return Ptr;
 }
 
-[[maybe_unused]] void rpc_free(void *Ptr) {
+void rpc_free(void *Ptr) {
   rpc::Client::Port Port = __asan_rpc_client.open<LIBC_FREE>();
   Port.send([=](rpc::Buffer *Buffer, uint32_t) {
     Buffer->data[0] = reinterpret_cast<u64>(Ptr);
   });
 }
 
-struct Slab {
-  u64 Bump;
-  u64 End;
-};
-
-static Slab Cur;
-
-void *bump_alloc(uptr Need) {
-  Need = (Need + 15) & ~15u;
-  u64 Off = __scoped_atomic_fetch_add(&Cur.Bump, Need, __ATOMIC_RELAXED,
-                                      __MEMORY_SCOPE_DEVICE);
-  if (Off && Off + Need <= Cur.End)
-    return reinterpret_cast<void *>(Off);
-
-  uptr Bytes = Need > kSlab ? ((Need + kSlab - 1) & ~(kSlab - 1)) : kSlab;
-  u64 Slab = reinterpret_cast<u64>(rpc_allocate(Bytes));
-  if (!Slab)
-    return nullptr;
-  Cur.End = Slab + Bytes;
-  Cur.Bump = Slab + Need;
-  return reinterpret_cast<void *>(Slab);
-}
-
-void *asan_malloc(uptr Size, uptr Pc) {
-  (void)Pc;
+void *asan_malloc(uptr Size) {
   if (!Size)
     Size = 1;
-  uptr User = (Size + kGranule - 1) & ~(kGranule - 1);
+  uptr User = RoundUp(Size, kGranule);
   uptr Total = kRedzone + User + kRedzone;
-  u8 *Raw = static_cast<u8 *>(bump_alloc(Total));
+  u8 *Raw = static_cast<u8 *>(rpc_allocate(Total));
   if (!Raw)
     return nullptr;
-  *reinterpret_cast<uptr *>(Raw) = Size;
-  poison(reinterpret_cast<uptr>(Raw), kRedzone, kHeapRZ);
-  poison(reinterpret_cast<uptr>(Raw + kRedzone + User), kRedzone, kHeapRZ);
-  poison(reinterpret_cast<uptr>(Raw + kRedzone), User, 0);
-  if (User != Size)
-    poison(reinterpret_cast<uptr>(Raw + kRedzone + Size), User - Size, kHeapRZ);
+
+  Block *B = reinterpret_cast<Block *>(Raw);
+  B->magic = kBlockMagic;
+  B->size = Size;
+  poison_aligned(reinterpret_cast<uptr>(Raw), kRedzone, kHeapRZ);
+  poison_right_redzone(reinterpret_cast<uptr>(Raw + kRedzone), Size,
+                       User + kRedzone, kHeapRZ);
   return Raw + kRedzone;
 }
 
 void asan_free(uptr Addr, uptr Pc) {
-  (void)Pc;
   if (!Addr)
     return;
+
+  // A freed block keeps its poison, so a repeated free is visible in the
+  // shadow without having to trust the block header.
+  if (*Shadow(Addr) == kHeapFree) {
+    report(Pc, Addr, 0, false, true, ASAN_REPORT_DOUBLE_FREE);
+    __builtin_verbose_trap("AddressSanitizer", "double free");
+  }
+
+  // Only dereference the header once the shadow agrees that a left redzone
+  // sits in front of the pointer.
   uptr Raw = Addr - kRedzone;
-  uptr Size = *reinterpret_cast<uptr *>(Raw);
-  uptr User = (Size + kGranule - 1) & ~(kGranule - 1);
-  poison(Raw, kRedzone + User + kRedzone, kHeapFree);
+  if ((Addr & (kGranule - 1)) || *Shadow(Raw) != kHeapRZ) {
+    report(Pc, Addr, 0, false, true, ASAN_REPORT_INVALID_FREE);
+    __builtin_verbose_trap("AddressSanitizer", "invalid free");
+  }
+
+  Block *B = reinterpret_cast<Block *>(Raw);
+  if (B->magic != kBlockMagic) {
+    report(Pc, Addr, 0, false, true, ASAN_REPORT_INVALID_FREE);
+    __builtin_verbose_trap("AddressSanitizer", "invalid free");
+  }
+
+  uptr User = RoundUp(B->size, kGranule);
+  B->magic = 0;
+  poison_aligned(Raw, kRedzone + User + kRedzone, kHeapFree);
+  rpc_free(B);
 }
 
 } // namespace
@@ -261,15 +362,15 @@ ASAN_ACCESS_N(load, false)
 ASAN_ACCESS_N(store, true)
 
 void __asan_poison_region(u64 Addr, u64 Size) {
-  poison(static_cast<uptr>(Addr), static_cast<uptr>(Size), kHeapRZ);
+  poison_region(static_cast<uptr>(Addr), static_cast<uptr>(Size), kHeapRZ);
 }
 
 void __asan_poison_memory_region(void const volatile *Addr, uptr Size) {
-  poison(reinterpret_cast<uptr>(Addr), Size, kUserPoison);
+  poison_region(reinterpret_cast<uptr>(Addr), Size, kUserPoison);
 }
 
 void __asan_unpoison_memory_region(void const volatile *Addr, uptr Size) {
-  poison(reinterpret_cast<uptr>(Addr), Size, 0);
+  unpoison_region(reinterpret_cast<uptr>(Addr), Size);
 }
 
 int __asan_address_is_poisoned(void const volatile *Addr) {
@@ -286,24 +387,12 @@ uptr __asan_region_is_poisoned(void const volatile *Addr, uptr Size) {
   return 0;
 }
 
-u64 __asan_malloc_impl(u64 Size, u64 Pc) {
-  return reinterpret_cast<u64>(asan_malloc(static_cast<uptr>(Size),
-                                           static_cast<uptr>(Pc)));
+u64 __asan_malloc_impl(u64 Size, u64 /*Pc*/) {
+  return reinterpret_cast<u64>(asan_malloc(static_cast<uptr>(Size)));
 }
 
 void __asan_free_impl(u64 Addr, u64 Pc) {
   asan_free(static_cast<uptr>(Addr), static_cast<uptr>(Pc));
-}
-
-u64 __asan_aligned_alloc_impl(u64 Align, u64 Size, u64 Pc) {
-  if (!Align || (Align & (Align - 1)))
-    return 0;
-  uptr Need = static_cast<uptr>(Size) + static_cast<uptr>(Align);
-  u8 *P = static_cast<u8 *>(asan_malloc(Need, static_cast<uptr>(Pc)));
-  if (!P)
-    return 0;
-  return reinterpret_cast<u64>(
-      __builtin_align_up(P, static_cast<uptr>(Align)));
 }
 
 struct __asan_global {
@@ -319,17 +408,21 @@ struct __asan_global {
 
 void __asan_register_globals(__asan_global *Globals, uptr N) {
   for (uptr I = 0; I < N; ++I) {
-    uptr RZ = Globals[I].size_with_redzone - Globals[I].size;
-    if (RZ)
-      poison(Globals[I].beg + Globals[I].size, RZ, kGlobalRZ);
+    const __asan_global &G = Globals[I];
+    uptr Aligned = RoundUp(G.size, kGranule);
+    if (G.size != Aligned)
+      poison_right_redzone(G.beg + RoundDown(G.size, kGranule),
+                           G.size & (kGranule - 1), kGranule, kGlobalRZ);
+    if (G.size_with_redzone > Aligned)
+      poison_aligned(G.beg + Aligned, G.size_with_redzone - Aligned, kGlobalRZ);
   }
 }
 
 void __asan_unregister_globals(__asan_global *Globals, uptr N) {
   for (uptr I = 0; I < N; ++I) {
-    uptr RZ = Globals[I].size_with_redzone - Globals[I].size;
-    if (RZ)
-      poison(Globals[I].beg + Globals[I].size, RZ, 0);
+    const __asan_global &G = Globals[I];
+    poison_aligned(G.beg + RoundDown(G.size, kGranule),
+                   G.size_with_redzone - RoundDown(G.size, kGranule), 0);
   }
 }
 

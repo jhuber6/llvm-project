@@ -47,6 +47,25 @@ int hipLaunchKernel(const void *Func, dim3 GridDim, dim3 BlockDim, void **Args,
 int printf(const char *, ...);
 }
 
+// Mirrors the device malloc/free that __clang_hip_runtime_wrapper.h provides;
+// the tests run with -nogpuinc so the real wrapper is not available.
+#if __has_feature(address_sanitizer)
+extern "C" {
+__device__ unsigned long long __asan_malloc_impl(unsigned long long, unsigned long long);
+__device__ void __asan_free_impl(unsigned long long, unsigned long long);
+}
+
+__attribute__((noinline)) __device__ inline void *malloc(unsigned long Size) {
+  return (void *)__asan_malloc_impl(
+      Size, (unsigned long long)__builtin_return_address(0));
+}
+
+__attribute__((noinline)) __device__ inline void free(void *Ptr) {
+  __asan_free_impl((unsigned long long)Ptr,
+                   (unsigned long long)__builtin_return_address(0));
+}
+#endif
+
 #define CHECK_HIP(Expr)                                                        \
   do {                                                                         \
     if ((Expr) != 0) {                                                         \

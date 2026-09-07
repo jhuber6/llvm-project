@@ -40,13 +40,16 @@ void *ServerThread;
 bool Offload;
 atomic_uint8_t Stop;
 
-// Receives reports from the device and services them.
+// Receives reports from the device and services them. The reply is only sent
+// once the report is printed, which keeps the device parked until the output is
+// out; the trap that follows a fatal report otherwise races the runtime's own
+// abort and the report is lost.
 uint32_t handleReport(void *PortPtr, uint32_t) {
   auto &Port = *reinterpret_cast<rpc::Server::Port *>(PortPtr);
   if (Port.get_opcode() != ASAN_OFFLOAD_REPORT_OPCODE)
     return rpc::RPC_UNHANDLED_OPCODE;
 
-  Port.recv([&](rpc::Buffer *Buffer, uint32_t) {
+  Port.recv_and_send([&](rpc::Buffer *Buffer, uint32_t) {
     __asan_offload_report R;
     internal_memcpy(&R, Buffer->data, sizeof(R));
     PrintOffloadReport(R);
@@ -60,13 +63,19 @@ uint32_t handleLibc(void *PortPtr, uint32_t) {
   case LIBC_MALLOC:
     Port.recv_and_send([&](rpc::Buffer *Buffer, uint32_t) {
       void *P = nullptr;
-      GetHsa().AllocFineGrained(static_cast<uptr>(Buffer->data[0]), &P);
+      uptr Size = static_cast<uptr>(Buffer->data[0]);
+      if (GetHsa().AllocFineGrained(Size, &P) && P)
+        RecordDeviceHeap(reinterpret_cast<uptr>(P), Size);
       Buffer->data[0] = reinterpret_cast<u64>(P);
     });
     return rpc::RPC_SUCCESS;
   case LIBC_FREE:
     Port.recv([&](rpc::Buffer *Buffer, uint32_t) {
-      GetHsa().Free(reinterpret_cast<void *>(Buffer->data[0]));
+      void *P = reinterpret_cast<void *>(Buffer->data[0]);
+      if (!P)
+        return;
+      ForgetDeviceHeap(reinterpret_cast<uptr>(P));
+      GetHsa().Free(P);
     });
     return rpc::RPC_SUCCESS;
   default:

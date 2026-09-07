@@ -9,6 +9,8 @@
 #ifndef ASAN_OFFLOAD_SYMBOLIZE_H
 #define ASAN_OFFLOAD_SYMBOLIZE_H
 
+#include "asan_offload_globals.h"
+
 #include "sanitizer_common/sanitizer_internal_defs.h"
 #include "sanitizer_common/sanitizer_symbolizer.h"
 
@@ -20,6 +22,10 @@ void ForgetDeviceImage(__sanitizer::uptr LoadBase);
 void ForgetDeviceImages();
 
 __sanitizer::SymbolizedStack *SymbolizeOffloadPc(__sanitizer::uptr PC);
+
+// Describes the device global an address belongs to, if it is inside a loaded
+// image.
+bool FindOffloadGlobal(__sanitizer::uptr Addr, DeviceGlobalInfo *Out);
 
 } // namespace __asan
 

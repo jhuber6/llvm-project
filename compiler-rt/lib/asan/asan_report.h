@@ -41,6 +41,9 @@ void PrintGlobalLocation(InternalScopedString *str, const __asan_global &g,
 void PrintMemoryByte(InternalScopedString *str, const char *before, u8 byte,
                      bool in_shadow, const char *after = "\n");
 
+// Prints the shadow bytes surrounding an address, plus the legend.
+void PrintShadowMemoryForAddress(uptr addr);
+
 // The following functions prints address description depending
 // on the memory type (shadow/heap/stack/global).
 bool ParseFrameDescription(const char *frame_descr,

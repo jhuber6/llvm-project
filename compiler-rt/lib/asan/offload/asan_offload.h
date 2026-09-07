@@ -22,8 +22,35 @@ namespace __asan {
 void Initialize();
 void PrintOffloadReport(const __asan_offload_report &R);
 
-// Nest only after RpcMutex, the reverse deadlocks the report thread.
+// Lock order is HsaLifecycleMutex, then RpcMutex, then AsanOffloadMutex; the
+// reverse deadlocks the report thread.
+extern __sanitizer::Mutex HsaLifecycleMutex;
 extern __sanitizer::Mutex AsanOffloadMutex;
+
+// Where an allocation came from, which decides how the report describes it.
+enum RegionOrigin {
+  // 'hipMalloc' and friends, tracked by the HSA interceptors.
+  kRegionHost,
+  // The device allocator, tracked when it asked the host for memory.
+  kRegionDevice,
+};
+
+// A device allocation containing some address, live or recently freed.
+struct OffloadRegion {
+  uptr Beg;
+  uptr Size;
+  u32 AllocStack;
+  // Zero while the region is still live.
+  u32 FreeStack;
+  RegionOrigin Origin;
+};
+
+// Finds the allocation an address falls in or just outside of.
+bool FindOffloadRegion(uptr Addr, OffloadRegion *Out);
+
+// Tracking for the memory the device allocator requests over RPC.
+void RecordDeviceHeap(uptr Base, uptr Size);
+void ForgetDeviceHeap(uptr Base);
 
 } // namespace __asan
 

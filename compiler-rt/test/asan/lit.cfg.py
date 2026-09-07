@@ -4,6 +4,7 @@ import os
 import platform
 import re
 import shlex
+import subprocess
 
 import lit.formats
 from lit.llvm import llvm_config
@@ -339,11 +340,63 @@ if getattr(config, "asan_can_run_hip", False):
         )
         for triple in ("amdgpu-amd-amdhsa", "amdgcn-amd-amdhsa")
     )
-    if _amdgpu_asan_rt:
+
+    def _asan_xnack_arch(arch):
+        """Return a target ID with xnack on, or None if the GPU cannot do it.
+
+        Device ASan reads the host shadow, which needs xnack. The driver only
+        forwards -fsanitize=address to the device compilation when the target ID
+        makes xnack available, so asking it is the reliable test.
+        """
+        # A target ID that already names xnack just needs it turned on, one that
+        # does not has to have it spelled out.
+        candidates = [arch.replace(":xnack-", ":xnack+")]
+        if ":xnack" not in arch:
+            candidates.append(arch + ":xnack+")
+
+        for candidate in candidates:
+            cmd = [
+                config.clang.strip(),
+                "-x",
+                "hip",
+                "--offload-arch=" + candidate,
+                "-nogpuinc",
+                "-nogpulib",
+                "-fsanitize=address",
+                "-###",
+                "-c",
+                "-o",
+                "/dev/null",
+                "/dev/null",
+            ]
+            try:
+                out = subprocess.run(
+                    cmd, capture_output=True, universal_newlines=True
+                ).stderr
+            except OSError:
+                return None
+            for line in out.splitlines():
+                try:
+                    argv = shlex.split(line)
+                except ValueError:
+                    continue
+                if "-fsanitize=address" not in argv or "-triple" not in argv:
+                    continue
+                # The host job names the device triple too, so the only reliable
+                # signal is the triple that job is actually compiling for.
+                triple = argv[argv.index("-triple") + 1]
+                if triple.startswith("amdgcn") or triple.startswith("amdgpu"):
+                    return candidate
+        return None
+
+    _asan_hip_arch = (
+        _asan_xnack_arch(config.asan_gpu_arch) if _amdgpu_asan_rt else None
+    )
+    if _asan_hip_arch:
         config.available_features.add("asan-hip")
         hip_common = [
             "-xhip",
-            "--offload-arch=" + config.asan_gpu_arch,
+            "--offload-arch=" + _asan_hip_arch,
             "-nogpuinc",
             "-nogpulib",
             "-g",

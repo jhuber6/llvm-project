@@ -51,6 +51,7 @@ public:
 
   bool AllocFineGrained(uptr Bytes, void **Out);
   void Free(void *P);
+  bool PoolTakesRedzones(hsa_amd_memory_pool_t Pool);
   bool Copy(void *Dst, const void *Src, uptr N);
   const void *HostAddr(uptr Dev);
   bool SymbolAddr(hsa_executable_t Exec, const char *Name, hsa_agent_t Agent,
@@ -70,8 +71,15 @@ private:
 #undef ASAN_HSA_DECLARE
   } Api;
 
+  // Cached answer to PoolTakesRedzones, queried on every allocation.
+  struct PoolInfo {
+    u64 Handle;
+    bool Redzones;
+  };
+
   InternalMmapVectorNoCtor<hsa_agent_t> Agents;
   InternalMmapVectorNoCtor<hsa_executable_t> Executables;
+  InternalMmapVectorNoCtor<PoolInfo> Pools;
   hsa_amd_memory_pool_t FineGrainedPool;
   uptr Refs;
   atomic_uint8_t Active;

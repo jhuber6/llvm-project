@@ -62,7 +62,9 @@ typedef enum {
 } hsa_amd_memory_pool_info_t;
 
 typedef enum {
+  HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_KERNARG_INIT = 1,
   HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED = 2,
+  HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_COARSE_GRAINED = 4,
 } hsa_amd_memory_pool_global_flag_t;
 
 typedef enum {
@@ -155,11 +157,22 @@ hsa_status_t hsa_system_get_major_extension_table(uint16_t extension,
                                                   size_t table_length,
                                                   void *table);
 hsa_status_t hsa_memory_copy(void *dst, const void *src, size_t size);
+hsa_status_t hsa_memory_free(void *ptr);
 hsa_status_t hsa_amd_memory_async_copy(void *dst, hsa_agent_t dst_agent,
                                        const void *src, hsa_agent_t src_agent,
                                        size_t size, uint32_t num_dep_signals,
                                        const hsa_signal_t *dep_signals,
                                        hsa_signal_t completion_signal);
+
+typedef enum { HSA_AMD_SDMA_ENGINE_0 = 1 } hsa_amd_sdma_engine_id_t;
+
+// The runtime prefers this over hsa_amd_memory_async_copy whenever it has a
+// specific engine in mind, which is the common case for device copies.
+hsa_status_t hsa_amd_memory_async_copy_on_engine(
+    void *dst, hsa_agent_t dst_agent, const void *src, hsa_agent_t src_agent,
+    size_t size, uint32_t num_dep_signals, const hsa_signal_t *dep_signals,
+    hsa_signal_t completion_signal, hsa_amd_sdma_engine_id_t engine_id,
+    bool force_copy_on_sdma);
 
 typedef enum {
   HSA_EXT_POINTER_TYPE_UNKNOWN = 0,

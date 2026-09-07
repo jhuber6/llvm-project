@@ -7,6 +7,7 @@ include_directories(..)
 include_directories(../..)
 
 set(ASAN_OFFLOAD_SOURCES
+  asan_offload_globals.cpp
   asan_offload_hsa.cpp
   asan_offload_hsa_interceptors.cpp
   asan_offload_rpc.cpp
@@ -17,6 +18,7 @@ set(ASAN_OFFLOAD_SOURCES
 set(ASAN_OFFLOAD_HEADERS
   hsa.h
   asan_offload.h
+  asan_offload_globals.h
   asan_offload_hsa.h
   asan_offload_rpc.h
   asan_offload_symbolize.h
