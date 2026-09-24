@@ -327,6 +327,37 @@ else:
     config.substitutions.append(("%fPIE", "-fPIE"))
     config.substitutions.append(("%pie", "-pie"))
 
+# Device ASan needs XNACK, which offload-arch cannot report. Opt in with an
+# 'xnack+' amdgpu_arch or HSA_XNACK=1.
+_gpu_arch = getattr(config, "gpu_arch", "")
+_xnack = "xnack+" in _gpu_arch or os.environ.get("HSA_XNACK") == "1"
+if (
+    "asan" in getattr(config, "gpu_runtimes", [])
+    and not config.asan_dynamic
+    and _xnack
+):
+    _xnack_arch = _gpu_arch if "xnack" in _gpu_arch else _gpu_arch + ":xnack+"
+    _offload = {
+        "%clang_hip ": ("%clang_asan_hip ", "asan-hip"),
+        "%clang_omp_offload ": ("%clang_asan_omp_offload ", "asan-openmp-offload"),
+    }
+    for pattern, replacement in list(config.substitutions):
+        if pattern not in _offload:
+            continue
+        name, feature = _offload[pattern]
+        config.substitutions.append(
+            (
+                name,
+                replacement.replace(
+                    "--offload-arch=" + _gpu_arch,
+                    "--offload-arch=" + _xnack_arch,
+                ).rstrip()
+                + " -fsanitize=address ",
+            )
+        )
+        config.available_features.add(feature)
+        config.environment["HSA_XNACK"] = "1"
+
 # Only run the tests on supported OSs.
 if config.target_os not in ["Linux", "Darwin", "FreeBSD", "SunOS", "Windows", "NetBSD"]:
     config.unsupported = True

@@ -227,7 +227,12 @@ void Offload::TrackExecutable(hsa_executable_t Exec) {
     Lock L(&OffloadMtx);
     if (!Ready())
       return;
-    ForEachAgentObject(Exec, [&](hsa_loaded_code_object_t Obj, hsa_agent_t) {
+    ForEachAgentObject(Exec, [&](hsa_loaded_code_object_t Obj,
+                                 hsa_agent_t Agent) {
+      u32 Device = 0;
+      while (Device < DeviceList.size() &&
+             DeviceList[Device].Agent.handle != Agent.handle)
+        ++Device;
       u64 LoadBase = 0, LoadSize = 0;
       if (!ExecutableInfo(Obj,
                           HSA_VEN_AMD_LOADER_LOADED_CODE_OBJECT_INFO_LOAD_BASE,
@@ -256,7 +261,8 @@ void Offload::TrackExecutable(hsa_executable_t Exec) {
           StorageBase && StorageSize)
         Storage = reinterpret_cast<const void*>(StorageBase);
 
-      TrackImage((uptr)LoadBase, (uptr)LoadSize, Storage, (uptr)StorageSize);
+      TrackImage((uptr)LoadBase, (uptr)LoadSize, Storage, (uptr)StorageSize,
+                 Device);
     });
   }
   OffloadRpc::Start(*this, Exec);
@@ -337,6 +343,20 @@ bool Offload::Allocate(hsa_amd_memory_pool_t Pool, uptr Bytes, void** Out) {
     return false;
   *Out = P;
   return true;
+}
+
+// Fine-grained host memory visible to the host and every device.
+bool Offload::AllocateShared(uptr Bytes, void** Out) {
+  Lock L(&OffloadMtx);
+  if (!Ready() || !Bytes || !Out)
+    return false;
+  return Alloc(Host(), Bytes, Out);
+}
+
+void Offload::Deallocate(void* P) {
+  Lock L(&OffloadMtx);
+  if (Ready() && P)
+    Free(P);
 }
 
 void Offload::Free(void* P) { Api.hsa_amd_memory_pool_free(P); }

@@ -42,8 +42,11 @@ class Offload {
   void UntrackImages();
   bool GetMemoryPool(hsa_agent_t Agent, hsa_amd_memory_pool_t* Pool);
   bool Allocate(hsa_amd_memory_pool_t Pool, uptr Bytes, void** Out);
+  bool AllocateShared(uptr Bytes, void** Out);
+  void Deallocate(void* P);
   SymbolizedStack* Symbolize(uptr PC);
   bool SymbolizeData(uptr Addr, DataInfo* Info);
+  bool DeviceForPC(uptr PC, u32* Device);
 
  private:
   friend struct OffloadRpc;
@@ -85,7 +88,7 @@ class Offload {
   void StoreSignal(hsa_signal_t Sig);
 
   void TrackImage(uptr LoadBase, uptr LoadSize, const void* Storage,
-                  uptr StorageSize);
+                  uptr StorageSize, u32 Device);
   void UntrackImage(uptr LoadBase);
   bool ExecutableInfo(hsa_loaded_code_object_t Obj,
                       hsa_ven_amd_loader_loaded_code_object_info_t Attr,

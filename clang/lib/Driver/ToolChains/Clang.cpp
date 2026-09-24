@@ -9800,8 +9800,11 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
   };
   auto ToolChainHasSanitizerRT = [&](const ToolChain &TC, const ArgList &TCArgs,
                                      Action::OffloadKind Kind) {
-    if (TC.getSanitizerArgs(TCArgs, /*BA=*/{}, Kind).needsCsanRt())
+    const SanitizerArgs &SanArgs = TC.getSanitizerArgs(TCArgs, /*BA=*/{}, Kind);
+    if (SanArgs.needsCsanRt())
       return ToolChainHasRT(TC, "csan");
+    if (SanArgs.needsAsanRt())
+      return ToolChainHasRT(TC, "asan");
     return ToolChainHasRT(TC, "ubsan_minimal") ||
            ToolChainHasRT(TC, "ubsan_standalone");
   };

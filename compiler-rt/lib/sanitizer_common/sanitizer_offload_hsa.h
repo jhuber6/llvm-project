@@ -56,6 +56,10 @@ typedef struct hsa_loaded_code_object_s {
   uint64_t handle;
 } hsa_loaded_code_object_t;
 
+typedef struct hsa_amd_ipc_memory_s {
+  uint32_t handle[8];
+} hsa_amd_ipc_memory_t;
+
 typedef int64_t hsa_signal_value_t;
 
 typedef enum {
@@ -90,6 +94,14 @@ typedef enum {
   HSA_AMD_AGENT_INFO_COMPUTE_UNIT_COUNT = 0xA002,
   HSA_AMD_AGENT_INFO_MAX_WAVES_PER_CU = 0xA00A,
 } hsa_amd_agent_info_t;
+
+typedef enum {
+  HSA_AMD_SDMA_ENGINE_0 = 0x1,
+} hsa_amd_sdma_engine_id_t;
+
+typedef enum {
+  HSA_AMD_VMEM_ADDRESS_NO_REGISTER = 1,
+} hsa_amd_vmem_address_reserve_flag_t;
 
 typedef enum {
   HSA_SIGNAL_CONDITION_NE = 1,
@@ -160,6 +172,16 @@ hsa_status_t hsa_amd_memory_pool_allocate(hsa_amd_memory_pool_t memory_pool,
                                           size_t size, uint32_t flags,
                                           void** ptr);
 hsa_status_t hsa_amd_memory_pool_free(void* ptr);
+hsa_status_t hsa_memory_free(void* ptr);
+hsa_status_t hsa_amd_ipc_memory_create(void* ptr, size_t len,
+                                       hsa_amd_ipc_memory_t* handle);
+hsa_status_t hsa_amd_vmem_address_reserve(void** va, size_t size,
+                                          uint64_t address, uint64_t flags);
+hsa_status_t hsa_amd_vmem_address_reserve_align(void** va, size_t size,
+                                                uint64_t address,
+                                                uint64_t alignment,
+                                                uint64_t flags);
+hsa_status_t hsa_amd_vmem_address_free(void* va, size_t size);
 hsa_status_t hsa_amd_memory_pool_get_info(hsa_amd_memory_pool_t memory_pool,
                                           hsa_amd_memory_pool_info_t attribute,
                                           void* value);
@@ -175,6 +197,16 @@ hsa_status_t hsa_system_get_major_extension_table(uint16_t extension,
                                                   size_t table_length,
                                                   void* table);
 hsa_status_t hsa_memory_copy(void* dst, const void* src, size_t size);
+hsa_status_t hsa_amd_memory_async_copy(void* dst, hsa_agent_t dst_agent,
+                                       const void* src, hsa_agent_t src_agent,
+                                       size_t size, uint32_t num_dep_signals,
+                                       const hsa_signal_t* dep_signals,
+                                       hsa_signal_t completion_signal);
+hsa_status_t hsa_amd_memory_async_copy_on_engine(
+    void* dst, hsa_agent_t dst_agent, const void* src, hsa_agent_t src_agent,
+    size_t size, uint32_t num_dep_signals, const hsa_signal_t* dep_signals,
+    hsa_signal_t completion_signal, hsa_amd_sdma_engine_id_t engine_id,
+    bool force_copy_on_sdma);
 hsa_status_t hsa_amd_signal_create(hsa_signal_value_t initial_value,
                                    uint32_t num_consumers,
                                    const hsa_agent_t* consumers,

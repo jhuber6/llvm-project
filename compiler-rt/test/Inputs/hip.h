@@ -23,6 +23,8 @@ extern "C" {
 typedef struct ihipStream_t *hipStream_t;
 
 int hipMalloc(void **Ptr, unsigned long Size);
+int hipMallocManaged(void **Ptr, unsigned long Size, unsigned Flags = 1);
+int hipHostMalloc(void **Ptr, unsigned long Size, unsigned Flags = 0);
 int hipFree(void *Ptr);
 int hipDeviceSynchronize(void);
 

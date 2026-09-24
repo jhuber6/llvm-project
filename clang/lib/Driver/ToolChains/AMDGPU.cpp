@@ -39,8 +39,7 @@ RocmInstallationDetector::CommonBitcodeLibsPreferences::
     CommonBitcodeLibsPreferences(const Driver &D,
                                  const llvm::opt::ArgList &DriverArgs,
                                  StringRef GPUArch,
-                                 const Action::OffloadKind DeviceOffloadingKind,
-                                 const bool NeedsASanRT)
+                                 const Action::OffloadKind DeviceOffloadingKind)
     : ABIVer(DeviceLibABIVersion::fromCodeObjectVersion(
           tools::getAMDGPUCodeObjectVersion(D, DriverArgs))) {
   const auto Kind = llvm::AMDGPU::parseArchAMDGCN(GPUArch);
@@ -84,12 +83,6 @@ RocmInstallationDetector::CommonBitcodeLibsPreferences::
   FastRelaxedMath = DriverArgs.hasArg(options::OPT_cl_fast_relaxed_math) ||
                     DriverArgs.hasFlag(options::OPT_ffast_math,
                                        options::OPT_fno_fast_math, false);
-
-  // GPU Sanitizer currently only supports ASan and is enabled through host
-  // ASan.
-  GPUSan = (DriverArgs.hasFlag(options::OPT_fgpu_sanitize,
-                               options::OPT_fno_gpu_sanitize, true) &&
-            NeedsASanRT);
 }
 
 void RocmInstallationDetector::scanLibDevicePath(llvm::StringRef Path) {
@@ -119,8 +112,6 @@ void RocmInstallationDetector::scanLibDevicePath(llvm::StringRef Path) {
       OCKL = FilePath;
     } else if (BaseName == "opencl") {
       OpenCL = FilePath;
-    } else if (BaseName == "asanrtl") {
-      AsanRTL = FilePath;
     } else if (BaseName == "oclc_finite_only_off") {
       FiniteOnly.Off = FilePath;
     } else if (BaseName == "oclc_finite_only_on") {
@@ -992,8 +983,7 @@ void AMDGPUToolChain::addClangTargetOptions(
 
   // Link device libraries for OpenCL, HIP, and OpenMP
   for (auto BCFile : getDeviceLibs(DriverArgs, BA, DeviceOffloadingKind)) {
-    CC1Args.push_back(BCFile.ShouldInternalize ? "-mlink-builtin-bitcode"
-                                               : "-mlink-bitcode-file");
+    CC1Args.push_back("-mlink-builtin-bitcode");
     CC1Args.push_back(DriverArgs.MakeArgStringRef(BCFile.Path));
   }
 }
@@ -1130,30 +1120,19 @@ bool RocmInstallationDetector::checkCommonBitcodeLibs(
 llvm::SmallVector<ToolChain::BitCodeLibraryInfo, 12>
 RocmInstallationDetector::getCommonBitcodeLibs(
     const llvm::opt::ArgList &DriverArgs, StringRef LibDeviceFile,
-    StringRef GPUArch, const Action::OffloadKind DeviceOffloadingKind,
-    const bool NeedsASanRT) const {
+    StringRef GPUArch, const Action::OffloadKind DeviceOffloadingKind) const {
   llvm::SmallVector<ToolChain::BitCodeLibraryInfo, 12> BCLibs;
 
   CommonBitcodeLibsPreferences Pref{D, DriverArgs, GPUArch,
-                                    DeviceOffloadingKind, NeedsASanRT};
+                                    DeviceOffloadingKind};
 
-  auto AddBCLib = [&](ToolChain::BitCodeLibraryInfo BCLib,
-                      bool Internalize = true) {
-    if (!BCLib.Path.empty()) {
-      BCLib.ShouldInternalize = Internalize;
+  auto AddBCLib = [&](ToolChain::BitCodeLibraryInfo BCLib) {
+    if (!BCLib.Path.empty())
       BCLibs.emplace_back(BCLib);
-    }
-  };
-  auto AddSanBCLibs = [&]() {
-    if (Pref.GPUSan)
-      AddBCLib(getAsanRTLPath(), false);
   };
 
-  AddSanBCLibs();
   AddBCLib(getOCMLPath());
   if (!Pref.IsOpenMP)
-    AddBCLib(getOCKLPath());
-  else if (Pref.GPUSan && Pref.IsOpenMP)
     AddBCLib(getOCKLPath());
   AddBCLib(getUnsafeMathPath(Pref.UnsafeMathOpt || Pref.FastRelaxedMath));
   AddBCLib(getFiniteOnlyPath(Pref.FiniteOnly || Pref.FastRelaxedMath));
@@ -1180,10 +1159,8 @@ AMDGPUToolChain::getCommonDeviceLibNames(
                                                 ABIVer))
     return {};
 
-  return RocmInstallation->getCommonBitcodeLibs(
-      DriverArgs, LibDeviceFile, GPUArch, DeviceOffloadingKind,
-      getSanitizerArgs(DriverArgs, BoundArch(TargetID), DeviceOffloadingKind)
-          .needsAsanRt());
+  return RocmInstallation->getCommonBitcodeLibs(DriverArgs, LibDeviceFile,
+                                                GPUArch, DeviceOffloadingKind);
 }
 
 llvm::SmallVector<ToolChain::BitCodeLibraryInfo, 12>
@@ -1291,9 +1268,7 @@ AMDGPUToolChain::getDeviceLibs(const llvm::opt::ArgList &DriverArgs,
 
   // Add the generic set of libraries
   BCLibs.append(RocmInstallation->getCommonBitcodeLibs(
-      DriverArgs, LibDeviceFile, GpuArch, DeviceOffloadKind,
-      getSanitizerArgs(DriverArgs, BoundArch{TargetID}, DeviceOffloadKind)
-          .needsAsanRt()));
+      DriverArgs, LibDeviceFile, GpuArch, DeviceOffloadKind));
 
   return BCLibs;
 }

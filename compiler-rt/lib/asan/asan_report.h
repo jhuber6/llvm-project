@@ -38,6 +38,7 @@ void PrintGlobalNameIfASCII(InternalScopedString *str, const __asan_global &g);
 void PrintGlobalLocation(InternalScopedString *str, const __asan_global &g,
                          bool print_module_name);
 
+void PrintShadowMemoryForAddress(uptr addr);
 void PrintMemoryByte(InternalScopedString *str, const char *before, u8 byte,
                      bool in_shadow, const char *after = "\n");
 

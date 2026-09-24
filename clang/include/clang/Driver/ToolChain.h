@@ -134,9 +134,7 @@ public:
 
   struct BitCodeLibraryInfo {
     std::string Path;
-    bool ShouldInternalize;
-    BitCodeLibraryInfo(StringRef Path, bool ShouldInternalize = true)
-        : Path(Path), ShouldInternalize(ShouldInternalize) {}
+    BitCodeLibraryInfo(StringRef Path) : Path(Path) {}
   };
 
   enum FileType { FT_Object, FT_Static, FT_Shared };

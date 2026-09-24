@@ -131,6 +131,7 @@ void AMDGCN::Linker::constructLldCommand(Compilation &C, const JobAction &JA,
   TC.addProfileRTLibs(Args, LldArgs);
 
   LldArgs.push_back("--no-whole-archive");
+  addSanitizerRuntimes(TC, Args, LldArgs, C);
 
   const char *Lld = Args.MakeArgStringRef(getToolChain().GetProgramPath("lld"));
   C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),

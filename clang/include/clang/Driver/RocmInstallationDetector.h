@@ -69,11 +69,9 @@ private:
   };
 
   struct CommonBitcodeLibsPreferences {
-    CommonBitcodeLibsPreferences(const Driver &D,
-                                 const llvm::opt::ArgList &DriverArgs,
-                                 StringRef GPUArch,
-                                 const Action::OffloadKind DeviceOffloadingKind,
-                                 const bool NeedsASanRT);
+    CommonBitcodeLibsPreferences(
+        const Driver &D, const llvm::opt::ArgList &DriverArgs,
+        StringRef GPUArch, const Action::OffloadKind DeviceOffloadingKind);
 
     DeviceLibABIVersion ABIVer;
     bool IsOpenMP;
@@ -82,7 +80,6 @@ private:
     bool FiniteOnly;
     bool UnsafeMathOpt;
     bool FastRelaxedMath;
-    bool GPUSan;
   };
 
   const Driver &D;
@@ -138,9 +135,6 @@ private:
   // Libraries that are always linked depending on the language
   SmallString<0> OpenCL;
 
-  // Asan runtime library
-  SmallString<0> AsanRTL;
-
   // Libraries swapped based on compile flags.
   ConditionalLibrary WavefrontSize64;
   ConditionalLibrary FiniteOnly;
@@ -181,8 +175,7 @@ public:
   llvm::SmallVector<ToolChain::BitCodeLibraryInfo, 12>
   getCommonBitcodeLibs(const llvm::opt::ArgList &DriverArgs,
                        StringRef LibDeviceFile, StringRef GPUArch,
-                       const Action::OffloadKind DeviceOffloadingKind,
-                       const bool NeedsASanRT) const;
+                       const Action::OffloadKind DeviceOffloadingKind) const;
   /// Check file paths of default bitcode libraries common to AMDGPU based
   /// toolchains. \returns false if there are invalid or missing files.
   bool checkCommonBitcodeLibs(StringRef GPUArch, StringRef LibDeviceFile,
@@ -232,9 +225,6 @@ public:
     assert(!OpenCL.empty());
     return OpenCL;
   }
-
-  /// Returns empty string of Asan runtime library is not available.
-  StringRef getAsanRTLPath() const { return AsanRTL; }
 
   StringRef getWavefrontSize64Path(bool Enabled) const {
     return WavefrontSize64.get(Enabled);

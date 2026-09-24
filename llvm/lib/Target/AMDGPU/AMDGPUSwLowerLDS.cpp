@@ -980,6 +980,7 @@ void AMDGPUSwLowerLDS::lowerKernelLDSAccesses(Function *Func,
 
   // Free Block
   IRB.SetInsertPoint(FreeBlock, FreeBlock->begin());
+  IRB.SetCurrentDebugLocation(FirstDL);
 
   // Free the previously allocate device global memory.
   FunctionCallee AsanFreeFunc = M.getOrInsertFunction(

@@ -29,7 +29,6 @@
 // RUN:   %s 2>&1 | FileCheck -check-prefix=ERR %s
 
 // CHECK: "-triple" "amdgpu{{[0-9.]+}}-amd-amdhsa"
-// CHECK-SAME: "-mlink-bitcode-file" "{{.*}}asanrtl.bc"
 // CHECK-SAME: "-fsanitize=address"
 
 

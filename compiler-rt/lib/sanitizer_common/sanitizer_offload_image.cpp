@@ -25,6 +25,7 @@ struct DeviceImage {
   uptr LoadSize;
   void* Bytes;
   uptr BytesSize;
+  u32 Device;
   char Path[256];
 };
 
@@ -97,13 +98,14 @@ bool SnapshotImage(uptr Addr, char** Path, uptr* Offset) {
 }  // namespace
 
 void Offload::TrackImage(uptr LoadBase, uptr LoadSize, const void* Storage,
-                         uptr StorageSize) {
+                         uptr StorageSize, u32 Device) {
   Lock L(&ImageMutex);
   if (ImageFor(LoadBase))
     return;
   DeviceImage Img = {};
   Img.LoadBase = LoadBase;
   Img.LoadSize = LoadSize;
+  Img.Device = Device;
   if (Storage && StorageSize) {
     Img.Bytes = MmapOrDie(StorageSize, "offload device image");
     internal_memcpy(Img.Bytes, Storage, StorageSize);
@@ -145,6 +147,15 @@ SymbolizedStack* Offload::Symbolize(uptr PC) {
   return Frames;
 }
 
+bool Offload::DeviceForPC(uptr PC, u32* Device) {
+  Lock L(&ImageMutex);
+  DeviceImage* Img = ImageFor(PC);
+  if (!Img)
+    return false;
+  *Device = Img->Device;
+  return true;
+}
+
 bool Offload::SymbolizeData(uptr Addr, DataInfo* Info) {
   if (!Addr || !Info)
     return false;
@@ -163,6 +174,7 @@ bool Offload::SymbolizeData(uptr Addr, DataInfo* Info) {
     Info->Clear();
     return false;
   }
+  Info->start += Addr - Offset;
   return true;
 }
 
