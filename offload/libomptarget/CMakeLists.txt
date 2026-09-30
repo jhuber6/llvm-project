@@ -59,11 +59,7 @@ endif()
 
 target_include_directories(omptarget PRIVATE ${LIBOMPTARGET_INCLUDE_DIR})
 
-target_link_libraries(
-  omptarget
-  PRIVATE
-  ${CMAKE_DL_LIBS}
-  "-Wl,--no-allow-shlib-undefined")
+target_link_libraries(omptarget PRIVATE ${CMAKE_DL_LIBS})
 # Define the TARGET_NAME and DEBUG_PREFIX.
 target_compile_definitions(omptarget PRIVATE
   TARGET_NAME=omptarget
