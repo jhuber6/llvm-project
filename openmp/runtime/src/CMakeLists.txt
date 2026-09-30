@@ -438,9 +438,12 @@ else()
     install(FILES ${LIBOMP_LIBRARY_DIR}/libomp.a DESTINATION "${OPENMP_INSTALL_LIBDIR}" COMPONENT runtime)
   else()
     install(TARGETS omp ${export_to_llvmexports} EXPORT openmpTargets ${LIBOMP_INSTALL_KIND}
-            DESTINATION "${OPENMP_INSTALL_LIBDIR}")
-    install(EXPORT openmpTargets FILE openmpTargets.cmake NAMESPACE OpenMP::
-            DESTINATION ${OPENMP_INSTALL_CFGDIR}/openmp)
+            DESTINATION "${OPENMP_INSTALL_LIBDIR}" COMPONENT openmp)
+    # Multilibs share the CMake package directory with the base build.
+    if(NOT OPENMP_LIBDIR_SUBDIR)
+      install(EXPORT openmpTargets FILE openmpTargets.cmake NAMESPACE OpenMP::
+              DESTINATION ${OPENMP_INSTALL_CFGDIR}/openmp COMPONENT openmp)
+    endif()
   endif()
 
   # Create cmake configuration files
@@ -452,8 +455,10 @@ else()
    INSTALL_DESTINATION ${OPENMP_INSTALL_CFGDIR}/openmp
    PATH_VARS LIBOMP_HEADERS_INSTALL_PATH OPENMP_INSTALL_LIBDIR)
 
-  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/openmp-config.cmake
-          DESTINATION ${OPENMP_INSTALL_CFGDIR}/openmp)
+  if(NOT OPENMP_LIBDIR_SUBDIR)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/openmp-config.cmake
+            DESTINATION ${OPENMP_INSTALL_CFGDIR}/openmp COMPONENT openmp)
+  endif()
   install(TARGETS omp ${export_to_llvmexports} ${LIBOMP_INSTALL_KIND} DESTINATION "${OPENMP_INSTALL_LIBDIR}" COMPONENT openmp)
 
   if(LIBOMP_INSTALL_ALIASES)
