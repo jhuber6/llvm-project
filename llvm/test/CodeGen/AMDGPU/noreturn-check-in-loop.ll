@@ -8,198 +8,101 @@ define amdgpu_kernel void @divergent_checks(ptr addrspace(1) %out, ptr addrspace
 ; CHECK-LABEL: divergent_checks:
 ; CHECK:       ; %bb.0: ; %entry
 ; CHECK-NEXT:    s_add_u32 s12, s12, s17
-; CHECK-NEXT:    s_mov_b32 s32, 0
 ; CHECK-NEXT:    s_addc_u32 s13, s13, 0
+; CHECK-NEXT:    s_mov_b32 s32, 0
 ; CHECK-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_LO), s12
 ; CHECK-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_HI), s13
-; CHECK-NEXT:    s_mov_b64 s[34:35], s[8:9]
-; CHECK-NEXT:    s_mov_b32 s51, s14
-; CHECK-NEXT:    s_clause 0x2
-; CHECK-NEXT:    s_load_dword s14, s[8:9], 0x18
-; CHECK-NEXT:    s_load_dwordx4 s[52:55], s[8:9], 0x0
-; CHECK-NEXT:    s_load_dwordx2 s[8:9], s[8:9], 0x10
-; CHECK-NEXT:    v_mov_b32_e32 v40, v0
-; CHECK-NEXT:    v_mov_b32_e32 v42, v2
-; CHECK-NEXT:    v_mov_b32_e32 v41, v1
-; CHECK-NEXT:    v_mov_b32_e32 v2, 0
 ; CHECK-NEXT:    s_add_u32 s0, s0, s17
-; CHECK-NEXT:    v_lshlrev_b32_e32 v0, 2, v40
+; CHECK-NEXT:    s_clause 0x2
+; CHECK-NEXT:    s_load_dword s17, s[8:9], 0x18
+; CHECK-NEXT:    s_load_dwordx4 s[20:23], s[8:9], 0x0
+; CHECK-NEXT:    s_load_dwordx2 s[12:13], s[8:9], 0x10
+; CHECK-NEXT:    v_mov_b32_e32 v6, 0
+; CHECK-NEXT:    v_lshlrev_b32_e32 v5, 2, v0
 ; CHECK-NEXT:    s_addc_u32 s1, s1, 0
-; CHECK-NEXT:    s_mov_b32 s33, s16
-; CHECK-NEXT:    s_mov_b32 s50, s15
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
-; CHECK-NEXT:    s_cmp_lt_i32 s14, 1
-; CHECK-NEXT:    s_cbranch_scc1 .LBB0_18
+; CHECK-NEXT:    s_cmp_lt_i32 s17, 1
+; CHECK-NEXT:    s_cbranch_scc1 .LBB0_5
 ; CHECK-NEXT:  ; %bb.1: ; %loop.preheader
-; CHECK-NEXT:    s_load_dwordx2 s[12:13], s[34:35], 0x20
-; CHECK-NEXT:    v_mov_b32_e32 v1, 0
-; CHECK-NEXT:    v_mov_b32_e32 v2, v0
-; CHECK-NEXT:    s_mov_b32 s17, 0
-; CHECK-NEXT:    ; implicit-def: $sgpr16
-; CHECK-NEXT:    ; implicit-def: $sgpr15
-; CHECK-NEXT:    ; implicit-def: $sgpr19
-; CHECK-NEXT:    ; implicit-def: $sgpr18
-; CHECK-NEXT:    ; implicit-def: $sgpr20
-; CHECK-NEXT:    v_mov_b32_e32 v3, v1
+; CHECK-NEXT:    s_load_dwordx2 s[18:19], s[8:9], 0x20
+; CHECK-NEXT:    v_mov_b32_e32 v6, 0
+; CHECK-NEXT:    v_mov_b32_e32 v3, v5
+; CHECK-NEXT:    v_mov_b32_e32 v4, v6
+; CHECK-NEXT:    .p2align 6
 ; CHECK-NEXT:  .LBB0_2: ; %loop
 ; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
-; CHECK-NEXT:    v_mov_b32_e32 v43, v2
-; CHECK-NEXT:    v_mov_b32_e32 v44, v3
-; CHECK-NEXT:    s_andn2_b32 s20, s20, exec_lo
-; CHECK-NEXT:    s_or_b32 s18, s18, exec_lo
-; CHECK-NEXT:    s_or_b32 s19, s19, exec_lo
-; CHECK-NEXT:    v_add_co_u32 v2, vcc_lo, v43, 3
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v3, null, 0, v44, vcc_lo
+; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, v3, 3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, 0, v4, vcc_lo
+; CHECK-NEXT:    s_mov_b32 s24, exec_lo
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
-; CHECK-NEXT:    v_cmp_gt_u64_e32 vcc_lo, s[12:13], v[2:3]
-; CHECK-NEXT:    ; implicit-def: $vgpr2_vgpr3
-; CHECK-NEXT:    s_and_saveexec_b32 s21, vcc_lo
-; CHECK-NEXT:    s_cbranch_execz .LBB0_6
+; CHECK-NEXT:    v_cmpx_le_u64_e32 s[18:19], v[7:8]
+; CHECK-NEXT:    s_cbranch_execnz .LBB0_6
 ; CHECK-NEXT:  ; %bb.3: ; %load.ok
 ; CHECK-NEXT:    ; in Loop: Header=BB0_2 Depth=1
-; CHECK-NEXT:    s_mov_b32 s23, -1
-; CHECK-NEXT:    s_mov_b32 s24, -1
-; CHECK-NEXT:    s_mov_b32 s22, exec_lo
-; CHECK-NEXT:    ; implicit-def: $vgpr2_vgpr3
-; CHECK-NEXT:    v_cmpx_gt_u64_e32 s[12:13], v[43:44]
-; CHECK-NEXT:    s_cbranch_execz .LBB0_5
+; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s24
+; CHECK-NEXT:    s_mov_b32 s24, exec_lo
+; CHECK-NEXT:    v_cmpx_le_u64_e32 s[18:19], v[3:4]
+; CHECK-NEXT:    s_cbranch_execnz .LBB0_7
 ; CHECK-NEXT:  ; %bb.4: ; %store.ok
 ; CHECK-NEXT:    ; in Loop: Header=BB0_2 Depth=1
-; CHECK-NEXT:    v_add_co_u32 v2, vcc_lo, s54, v43
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v3, null, s55, v44, vcc_lo
-; CHECK-NEXT:    v_add_co_u32 v4, vcc_lo, s52, v43
-; CHECK-NEXT:    s_add_i32 s14, s14, -1
-; CHECK-NEXT:    global_load_dword v2, v[2:3], off
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v5, null, s53, v44, vcc_lo
-; CHECK-NEXT:    s_cmp_eq_u32 s14, 0
-; CHECK-NEXT:    s_cselect_b32 s23, -1, 0
-; CHECK-NEXT:    s_xor_b32 s24, exec_lo, -1
-; CHECK-NEXT:    s_orn2_b32 s23, s23, exec_lo
+; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s24
+; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, s22, v3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, s23, v4, vcc_lo
+; CHECK-NEXT:    s_add_i32 s17, s17, -1
+; CHECK-NEXT:    s_cmp_lg_u32 s17, 0
+; CHECK-NEXT:    global_load_dword v9, v[7:8], off
+; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, s20, v3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, s21, v4, vcc_lo
+; CHECK-NEXT:    v_add_co_u32 v3, vcc_lo, 0x100, v3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v4, null, 0, v4, vcc_lo
 ; CHECK-NEXT:    s_waitcnt vmcnt(0)
-; CHECK-NEXT:    v_add_f32_e32 v6, v2, v2
-; CHECK-NEXT:    v_add_f32_e32 v1, v1, v2
-; CHECK-NEXT:    v_add_co_u32 v2, vcc_lo, 0x100, v43
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v3, null, 0, v44, vcc_lo
-; CHECK-NEXT:    global_store_dword v[4:5], v6, off
-; CHECK-NEXT:  .LBB0_5: ; %Flow11
-; CHECK-NEXT:    ; in Loop: Header=BB0_2 Depth=1
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s22
-; CHECK-NEXT:    s_andn2_b32 s20, s20, exec_lo
-; CHECK-NEXT:    s_and_b32 s22, s24, exec_lo
-; CHECK-NEXT:    s_andn2_b32 s19, s19, exec_lo
-; CHECK-NEXT:    s_or_b32 s20, s20, s22
-; CHECK-NEXT:    s_and_b32 s22, s23, exec_lo
-; CHECK-NEXT:    s_andn2_b32 s18, s18, exec_lo
-; CHECK-NEXT:    s_or_b32 s19, s19, s22
-; CHECK-NEXT:  .LBB0_6: ; %Flow
-; CHECK-NEXT:    ; in Loop: Header=BB0_2 Depth=1
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s21
-; CHECK-NEXT:    s_xor_b32 s21, s20, -1
-; CHECK-NEXT:    s_and_b32 s22, exec_lo, s19
-; CHECK-NEXT:    s_xor_b32 s23, s18, -1
-; CHECK-NEXT:    s_or_b32 s17, s22, s17
-; CHECK-NEXT:    s_andn2_b32 s15, s15, exec_lo
-; CHECK-NEXT:    s_and_b32 s21, s21, exec_lo
-; CHECK-NEXT:    s_andn2_b32 s16, s16, exec_lo
-; CHECK-NEXT:    s_and_b32 s22, s23, exec_lo
-; CHECK-NEXT:    s_or_b32 s15, s15, s21
-; CHECK-NEXT:    s_or_b32 s16, s16, s22
-; CHECK-NEXT:    s_andn2_b32 exec_lo, exec_lo, s17
-; CHECK-NEXT:    s_cbranch_execnz .LBB0_2
-; CHECK-NEXT:  ; %bb.7: ; %loop.exit.guard
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s17
-; CHECK-NEXT:    v_mov_b32_e32 v2, 0
-; CHECK-NEXT:    s_mov_b32 s13, 0
-; CHECK-NEXT:    s_mov_b32 s64, -1
-; CHECK-NEXT:    s_mov_b32 s12, 0
-; CHECK-NEXT:    s_and_saveexec_b32 s14, s16
-; CHECK-NEXT:    s_xor_b32 s14, exec_lo, s14
-; CHECK-NEXT:  ; %bb.8: ; %loop.exit.guard10
-; CHECK-NEXT:    v_mov_b32_e32 v2, v1
-; CHECK-NEXT:    s_mov_b32 s12, exec_lo
-; CHECK-NEXT:    s_xor_b32 s64, exec_lo, -1
-; CHECK-NEXT:    s_and_b32 s13, s15, exec_lo
-; CHECK-NEXT:  ; %bb.9: ; %Flow14
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s14
-; CHECK-NEXT:    s_and_saveexec_b32 s14, s13
-; CHECK-NEXT:    s_cbranch_execz .LBB0_11
-; CHECK-NEXT:  .LBB0_10: ; %exit
-; CHECK-NEXT:    s_andn2_b32 s12, s12, exec_lo
-; CHECK-NEXT:    global_store_dword v0, v2, s[8:9]
-; CHECK-NEXT:  .LBB0_11: ; %Flow15
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s14
-; CHECK-NEXT:    s_mov_b32 s36, 0
-; CHECK-NEXT:    s_and_saveexec_b32 s8, s12
-; CHECK-NEXT:    s_xor_b32 s65, exec_lo, s8
-; CHECK-NEXT:    s_cbranch_execz .LBB0_13
-; CHECK-NEXT:  ; %bb.12: ; %store.fail
-; CHECK-NEXT:    s_add_u32 s8, s34, 40
-; CHECK-NEXT:    s_addc_u32 s9, s35, 0
-; CHECK-NEXT:    s_getpc_b64 s[12:13]
-; CHECK-NEXT:    s_add_u32 s12, s12, report_store@gotpcrel32@lo+4
-; CHECK-NEXT:    s_addc_u32 s13, s13, report_store@gotpcrel32@hi+12
-; CHECK-NEXT:    v_lshlrev_b32_e32 v2, 20, v42
-; CHECK-NEXT:    s_load_dwordx2 s[16:17], s[12:13], 0x0
-; CHECK-NEXT:    v_lshlrev_b32_e32 v3, 10, v41
-; CHECK-NEXT:    v_add_co_u32 v0, vcc_lo, s52, v43
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v1, null, s53, v44, vcc_lo
-; CHECK-NEXT:    v_or3_b32 v31, v40, v3, v2
-; CHECK-NEXT:    v_mov_b32_e32 v2, 4
-; CHECK-NEXT:    v_mov_b32_e32 v3, 0
-; CHECK-NEXT:    s_mov_b32 s12, s51
-; CHECK-NEXT:    s_mov_b32 s13, s50
-; CHECK-NEXT:    s_mov_b32 s14, s33
-; CHECK-NEXT:    ; implicit-def: $sgpr15
-; CHECK-NEXT:    s_mov_b64 s[36:37], s[4:5]
-; CHECK-NEXT:    s_mov_b64 s[38:39], s[6:7]
-; CHECK-NEXT:    s_mov_b64 s[48:49], s[10:11]
-; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
-; CHECK-NEXT:    s_swappc_b64 s[30:31], s[16:17]
-; CHECK-NEXT:    s_mov_b64 s[4:5], s[36:37]
-; CHECK-NEXT:    s_mov_b64 s[6:7], s[38:39]
-; CHECK-NEXT:    s_mov_b64 s[10:11], s[48:49]
-; CHECK-NEXT:    s_mov_b32 s36, exec_lo
-; CHECK-NEXT:  .LBB0_13: ; %Flow16
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s65
-; CHECK-NEXT:    s_and_saveexec_b32 s37, s64
-; CHECK-NEXT:    s_cbranch_execz .LBB0_15
-; CHECK-NEXT:  ; %bb.14: ; %load.fail
-; CHECK-NEXT:    s_add_u32 s8, s34, 40
-; CHECK-NEXT:    s_addc_u32 s9, s35, 0
+; CHECK-NEXT:    v_add_f32_e32 v10, v9, v9
+; CHECK-NEXT:    v_add_f32_e32 v6, v6, v9
+; CHECK-NEXT:    global_store_dword v[7:8], v10, off
+; CHECK-NEXT:    s_cbranch_scc1 .LBB0_2
+; CHECK-NEXT:  .LBB0_5: ; %exit
+; CHECK-NEXT:    global_store_dword v5, v6, s[12:13]
+; CHECK-NEXT:    s_endpgm
+; CHECK-NEXT:  .LBB0_6: ; %load.fail
+; CHECK-NEXT:    s_add_u32 s8, s8, 40
+; CHECK-NEXT:    s_addc_u32 s9, s9, 0
 ; CHECK-NEXT:    s_getpc_b64 s[12:13]
 ; CHECK-NEXT:    s_add_u32 s12, s12, report_load@gotpcrel32@lo+4
 ; CHECK-NEXT:    s_addc_u32 s13, s13, report_load@gotpcrel32@hi+12
-; CHECK-NEXT:    v_lshlrev_b32_e32 v2, 20, v42
-; CHECK-NEXT:    s_load_dwordx2 s[16:17], s[12:13], 0x0
-; CHECK-NEXT:    v_lshlrev_b32_e32 v3, 10, v41
-; CHECK-NEXT:    v_add_co_u32 v0, vcc_lo, s54, v43
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v1, null, s55, v44, vcc_lo
-; CHECK-NEXT:    v_or3_b32 v31, v40, v3, v2
+; CHECK-NEXT:    v_lshlrev_b32_e32 v5, 20, v2
+; CHECK-NEXT:    s_load_dwordx2 s[18:19], s[12:13], 0x0
+; CHECK-NEXT:    v_lshlrev_b32_e32 v6, 10, v1
+; CHECK-NEXT:    v_add_co_u32 v2, vcc_lo, s22, v3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v1, null, s23, v4, vcc_lo
+; CHECK-NEXT:    v_or3_b32 v31, v0, v6, v5
+; CHECK-NEXT:    v_mov_b32_e32 v0, v2
 ; CHECK-NEXT:    v_mov_b32_e32 v2, 4
 ; CHECK-NEXT:    v_mov_b32_e32 v3, 0
-; CHECK-NEXT:    s_mov_b32 s12, s51
-; CHECK-NEXT:    s_mov_b32 s13, s50
-; CHECK-NEXT:    s_mov_b32 s14, s33
-; CHECK-NEXT:    ; implicit-def: $sgpr15
+; CHECK-NEXT:    s_mov_b32 s12, s14
+; CHECK-NEXT:    s_mov_b32 s13, s15
+; CHECK-NEXT:    s_mov_b32 s14, s16
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
-; CHECK-NEXT:    s_swappc_b64 s[30:31], s[16:17]
-; CHECK-NEXT:    s_or_b32 s36, s36, exec_lo
-; CHECK-NEXT:  .LBB0_15: ; %Flow17
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s37
-; CHECK-NEXT:    s_and_saveexec_b32 s4, s36
-; CHECK-NEXT:  ; %bb.16: ; %UnifiedUnreachableBlock
-; CHECK-NEXT:    ; divergent unreachable
-; CHECK-NEXT:  ; %bb.17: ; %UnifiedReturnBlock
-; CHECK-NEXT:    s_endpgm
-; CHECK-NEXT:  .LBB0_18:
-; CHECK-NEXT:    s_mov_b32 s13, -1
-; CHECK-NEXT:    s_mov_b32 s12, 0
-; CHECK-NEXT:    s_mov_b32 s64, 0
-; CHECK-NEXT:    ; implicit-def: $vgpr43_vgpr44
-; CHECK-NEXT:    ; implicit-def: $sgpr54_sgpr55
-; CHECK-NEXT:    s_and_saveexec_b32 s14, s13
-; CHECK-NEXT:    s_cbranch_execnz .LBB0_10
-; CHECK-NEXT:    s_branch .LBB0_11
+; CHECK-NEXT:    s_swappc_b64 s[30:31], s[18:19]
+; CHECK-NEXT:  .LBB0_7: ; %store.fail
+; CHECK-NEXT:    s_add_u32 s8, s8, 40
+; CHECK-NEXT:    s_addc_u32 s9, s9, 0
+; CHECK-NEXT:    s_getpc_b64 s[12:13]
+; CHECK-NEXT:    s_add_u32 s12, s12, report_store@gotpcrel32@lo+4
+; CHECK-NEXT:    s_addc_u32 s13, s13, report_store@gotpcrel32@hi+12
+; CHECK-NEXT:    v_lshlrev_b32_e32 v5, 20, v2
+; CHECK-NEXT:    s_load_dwordx2 s[18:19], s[12:13], 0x0
+; CHECK-NEXT:    v_lshlrev_b32_e32 v6, 10, v1
+; CHECK-NEXT:    v_add_co_u32 v2, vcc_lo, s20, v3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v1, null, s21, v4, vcc_lo
+; CHECK-NEXT:    v_or3_b32 v31, v0, v6, v5
+; CHECK-NEXT:    v_mov_b32_e32 v0, v2
+; CHECK-NEXT:    v_mov_b32_e32 v2, 4
+; CHECK-NEXT:    v_mov_b32_e32 v3, 0
+; CHECK-NEXT:    s_mov_b32 s12, s14
+; CHECK-NEXT:    s_mov_b32 s13, s15
+; CHECK-NEXT:    s_mov_b32 s14, s16
+; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
+; CHECK-NEXT:    s_swappc_b64 s[30:31], s[18:19]
 entry:
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %tid.64 = zext i32 %tid to i64
@@ -258,29 +161,25 @@ define amdgpu_kernel void @uniform_checks(ptr addrspace(1) %out, ptr addrspace(1
 ; CHECK-NEXT:    s_mov_b32 s32, 0
 ; CHECK-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_LO), s12
 ; CHECK-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_HI), s13
+; CHECK-NEXT:    s_add_u32 s0, s0, s17
 ; CHECK-NEXT:    s_clause 0x2
-; CHECK-NEXT:    s_load_dword s25, s[8:9], 0x18
+; CHECK-NEXT:    s_load_dword s17, s[8:9], 0x18
 ; CHECK-NEXT:    s_load_dwordx4 s[20:23], s[8:9], 0x0
 ; CHECK-NEXT:    s_load_dwordx2 s[12:13], s[8:9], 0x10
 ; CHECK-NEXT:    v_mov_b32_e32 v6, 0
 ; CHECK-NEXT:    v_lshlrev_b32_e32 v5, 2, v0
-; CHECK-NEXT:    s_add_u32 s0, s0, s17
 ; CHECK-NEXT:    s_addc_u32 s1, s1, 0
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
-; CHECK-NEXT:    s_cmp_lt_i32 s25, 1
-; CHECK-NEXT:    s_cbranch_scc1 .LBB1_8
+; CHECK-NEXT:    s_cmp_lt_i32 s17, 1
+; CHECK-NEXT:    s_cbranch_scc1 .LBB1_5
 ; CHECK-NEXT:  ; %bb.1: ; %loop.preheader
 ; CHECK-NEXT:    s_load_dwordx2 s[18:19], s[8:9], 0x20
 ; CHECK-NEXT:    v_mov_b32_e32 v6, 0
-; CHECK-NEXT:    v_mov_b32_e32 v7, v5
-; CHECK-NEXT:    s_mov_b32 s24, -1
-; CHECK-NEXT:    s_mov_b32 s17, 0
-; CHECK-NEXT:    v_mov_b32_e32 v8, v6
+; CHECK-NEXT:    v_mov_b32_e32 v3, v5
+; CHECK-NEXT:    v_mov_b32_e32 v4, v6
 ; CHECK-NEXT:    .p2align 6
 ; CHECK-NEXT:  .LBB1_2: ; %loop
 ; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
-; CHECK-NEXT:    v_mov_b32_e32 v3, v7
-; CHECK-NEXT:    v_mov_b32_e32 v4, v8
 ; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, v3, 3
 ; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, 0, v4, vcc_lo
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
@@ -289,39 +188,27 @@ define amdgpu_kernel void @uniform_checks(ptr addrspace(1) %out, ptr addrspace(1
 ; CHECK-NEXT:  ; %bb.3: ; %load.ok
 ; CHECK-NEXT:    ; in Loop: Header=BB1_2 Depth=1
 ; CHECK-NEXT:    v_cmp_le_u64_e32 vcc_lo, s[18:19], v[3:4]
-; CHECK-NEXT:    s_cbranch_vccnz .LBB1_9
+; CHECK-NEXT:    s_cbranch_vccnz .LBB1_7
 ; CHECK-NEXT:  ; %bb.4: ; %store.ok
 ; CHECK-NEXT:    ; in Loop: Header=BB1_2 Depth=1
 ; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, s22, v3
 ; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, s23, v4, vcc_lo
-; CHECK-NEXT:    v_add_co_u32 v9, vcc_lo, s20, v3
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v10, null, s21, v4, vcc_lo
-; CHECK-NEXT:    global_load_dword v7, v[7:8], off
-; CHECK-NEXT:    s_add_i32 s25, s25, -1
-; CHECK-NEXT:    s_cmp_eq_u32 s25, 0
+; CHECK-NEXT:    s_add_i32 s17, s17, -1
+; CHECK-NEXT:    s_cmp_lg_u32 s17, 0
+; CHECK-NEXT:    global_load_dword v9, v[7:8], off
+; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, s20, v3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, s21, v4, vcc_lo
+; CHECK-NEXT:    v_add_co_u32 v3, vcc_lo, 0x100, v3
+; CHECK-NEXT:    v_add_co_ci_u32_e64 v4, null, 0, v4, vcc_lo
 ; CHECK-NEXT:    s_waitcnt vmcnt(0)
-; CHECK-NEXT:    v_add_f32_e32 v11, v7, v7
-; CHECK-NEXT:    v_add_f32_e32 v6, v6, v7
-; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, 0x100, v3
-; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, 0, v4, vcc_lo
-; CHECK-NEXT:    global_store_dword v[9:10], v11, off
-; CHECK-NEXT:    s_cbranch_scc0 .LBB1_2
-; CHECK-NEXT:  ; %bb.5:
-; CHECK-NEXT:    s_mov_b32 s24, 0
-; CHECK-NEXT:    s_mov_b32 s17, 0
-; CHECK-NEXT:  .LBB1_6: ; %loop.exit.guard
-; CHECK-NEXT:    s_and_b32 vcc_lo, exec_lo, s24
-; CHECK-NEXT:    s_cbranch_vccnz .LBB1_10
-; CHECK-NEXT:  .LBB1_7: ; %loop.exit.guard10
-; CHECK-NEXT:    s_and_b32 vcc_lo, exec_lo, s17
-; CHECK-NEXT:    s_cbranch_vccnz .LBB1_11
-; CHECK-NEXT:  .LBB1_8: ; %exit
+; CHECK-NEXT:    v_add_f32_e32 v10, v9, v9
+; CHECK-NEXT:    v_add_f32_e32 v6, v6, v9
+; CHECK-NEXT:    global_store_dword v[7:8], v10, off
+; CHECK-NEXT:    s_cbranch_scc1 .LBB1_2
+; CHECK-NEXT:  .LBB1_5: ; %exit
 ; CHECK-NEXT:    global_store_dword v5, v6, s[12:13]
 ; CHECK-NEXT:    s_endpgm
-; CHECK-NEXT:  .LBB1_9:
-; CHECK-NEXT:    s_mov_b32 s17, -1
-; CHECK-NEXT:    s_branch .LBB1_7
-; CHECK-NEXT:  .LBB1_10: ; %load.fail
+; CHECK-NEXT:  .LBB1_6: ; %load.fail
 ; CHECK-NEXT:    s_add_u32 s8, s8, 40
 ; CHECK-NEXT:    s_addc_u32 s9, s9, 0
 ; CHECK-NEXT:    s_getpc_b64 s[12:13]
@@ -341,7 +228,7 @@ define amdgpu_kernel void @uniform_checks(ptr addrspace(1) %out, ptr addrspace(1
 ; CHECK-NEXT:    s_mov_b32 s14, s16
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
 ; CHECK-NEXT:    s_swappc_b64 s[30:31], s[18:19]
-; CHECK-NEXT:  .LBB1_11: ; %store.fail
+; CHECK-NEXT:  .LBB1_7: ; %store.fail
 ; CHECK-NEXT:    s_add_u32 s8, s8, 40
 ; CHECK-NEXT:    s_addc_u32 s9, s9, 0
 ; CHECK-NEXT:    s_getpc_b64 s[12:13]
@@ -423,100 +310,60 @@ define amdgpu_kernel void @lane_mask_live_out(ptr addrspace(1) %out, i32 %n) {
 ; CHECK-NEXT:    s_mov_b32 s32, 0
 ; CHECK-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_LO), s12
 ; CHECK-NEXT:    s_setreg_b32 hwreg(HW_REG_FLAT_SCR_HI), s13
-; CHECK-NEXT:    s_add_u32 s0, s0, s17
 ; CHECK-NEXT:    s_clause 0x1
 ; CHECK-NEXT:    s_load_dwordx2 s[18:19], s[8:9], 0x0
-; CHECK-NEXT:    s_load_dword s17, s[8:9], 0x8
+; CHECK-NEXT:    s_load_dword s13, s[8:9], 0x8
 ; CHECK-NEXT:    v_and_b32_e32 v3, 1, v0
+; CHECK-NEXT:    s_add_u32 s0, s0, s17
 ; CHECK-NEXT:    s_addc_u32 s1, s1, 0
-; CHECK-NEXT:    s_mov_b32 s13, s15
-; CHECK-NEXT:    s_mov_b32 s12, 0
+; CHECK-NEXT:    s_mov_b32 s21, 0
+; CHECK-NEXT:    s_mov_b32 s17, 0
 ; CHECK-NEXT:    s_mov_b32 s20, 0
-; CHECK-NEXT:    s_mov_b32 s23, 0
 ; CHECK-NEXT:    v_cmp_eq_u32_e32 vcc_lo, 1, v3
-; CHECK-NEXT:    ; implicit-def: $sgpr15
-; CHECK-NEXT:    ; implicit-def: $sgpr21
 ; CHECK-NEXT:    ; implicit-def: $sgpr22
-; CHECK-NEXT:    ; implicit-def: $sgpr24
-; CHECK-NEXT:    s_inst_prefetch 0x1
-; CHECK-NEXT:    s_branch .LBB2_3
-; CHECK-NEXT:    .p2align 6
-; CHECK-NEXT:  .LBB2_1: ; %cont
-; CHECK-NEXT:    ; in Loop: Header=BB2_3 Depth=1
-; CHECK-NEXT:    s_add_i32 s23, s23, 1
-; CHECK-NEXT:    s_xor_b32 s26, s12, vcc_lo
-; CHECK-NEXT:    v_cmp_ge_u32_e64 s12, s23, v0
-; CHECK-NEXT:    s_andn2_b32 s24, s24, exec_lo
-; CHECK-NEXT:    s_and_b32 s26, s26, exec_lo
-; CHECK-NEXT:    s_andn2_b32 s22, s22, exec_lo
-; CHECK-NEXT:    s_mov_b32 s25, 0
-; CHECK-NEXT:    s_or_b32 s24, s24, s26
-; CHECK-NEXT:    s_or_b32 s22, s22, s12
-; CHECK-NEXT:    ; implicit-def: $sgpr12
-; CHECK-NEXT:  .LBB2_2: ; %Flow2
-; CHECK-NEXT:    ; in Loop: Header=BB2_3 Depth=1
-; CHECK-NEXT:    s_and_b32 s26, exec_lo, s22
-; CHECK-NEXT:    s_andn2_b32 s12, s12, exec_lo
-; CHECK-NEXT:    s_and_b32 s27, s24, exec_lo
-; CHECK-NEXT:    s_andn2_b32 s21, s21, exec_lo
-; CHECK-NEXT:    s_and_b32 s25, s25, exec_lo
-; CHECK-NEXT:    s_andn2_b32 s15, s15, exec_lo
-; CHECK-NEXT:    s_or_b32 s20, s26, s20
-; CHECK-NEXT:    s_or_b32 s12, s12, s27
-; CHECK-NEXT:    s_or_b32 s21, s21, s25
-; CHECK-NEXT:    s_or_b32 s15, s15, s27
-; CHECK-NEXT:    s_andn2_b32 exec_lo, exec_lo, s20
-; CHECK-NEXT:    s_cbranch_execz .LBB2_5
-; CHECK-NEXT:  .LBB2_3: ; %loop
+; CHECK-NEXT:  .LBB2_1: ; %loop
 ; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
-; CHECK-NEXT:    s_andn2_b32 s24, s24, exec_lo
-; CHECK-NEXT:    s_or_b32 s22, s22, exec_lo
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
-; CHECK-NEXT:    s_cmp_lg_u32 s17, s23
-; CHECK-NEXT:    s_cbranch_scc1 .LBB2_1
-; CHECK-NEXT:  ; %bb.4: ; in Loop: Header=BB2_3 Depth=1
-; CHECK-NEXT:    s_mov_b32 s25, -1
-; CHECK-NEXT:    ; implicit-def: $sgpr23
-; CHECK-NEXT:    s_branch .LBB2_2
-; CHECK-NEXT:  .LBB2_5: ; %loop.exit.guard
-; CHECK-NEXT:    s_inst_prefetch 0x2
-; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s20
-; CHECK-NEXT:    s_xor_b32 s12, s21, -1
-; CHECK-NEXT:    s_and_saveexec_b32 s17, s12
-; CHECK-NEXT:    s_xor_b32 s12, exec_lo, s17
-; CHECK-NEXT:    s_cbranch_execz .LBB2_7
-; CHECK-NEXT:  ; %bb.6: ; %exit
-; CHECK-NEXT:    v_cndmask_b32_e64 v0, 2, 1, s15
+; CHECK-NEXT:    s_cmp_lg_u32 s13, s20
+; CHECK-NEXT:    s_cbranch_scc0 .LBB2_4
+; CHECK-NEXT:  ; %bb.2: ; %cont
+; CHECK-NEXT:    ; in Loop: Header=BB2_1 Depth=1
+; CHECK-NEXT:    s_add_i32 s20, s20, 1
+; CHECK-NEXT:    s_xor_b32 s23, s21, vcc_lo
+; CHECK-NEXT:    v_cmp_ge_u32_e64 s12, s20, v0
+; CHECK-NEXT:    s_andn2_b32 s21, s21, exec_lo
+; CHECK-NEXT:    s_andn2_b32 s22, s22, exec_lo
+; CHECK-NEXT:    s_and_b32 s23, s23, exec_lo
+; CHECK-NEXT:    s_or_b32 s21, s21, s23
+; CHECK-NEXT:    s_or_b32 s17, s12, s17
+; CHECK-NEXT:    s_or_b32 s22, s22, s23
+; CHECK-NEXT:    s_andn2_b32 exec_lo, exec_lo, s17
+; CHECK-NEXT:    s_cbranch_execnz .LBB2_1
+; CHECK-NEXT:  ; %bb.3: ; %exit
+; CHECK-NEXT:    s_or_b32 exec_lo, exec_lo, s17
+; CHECK-NEXT:    v_cndmask_b32_e64 v0, 2, 1, s22
 ; CHECK-NEXT:    v_mov_b32_e32 v1, 0
-; CHECK-NEXT:    ; implicit-def: $vgpr2
 ; CHECK-NEXT:    global_store_dword v1, v0, s[18:19]
-; CHECK-NEXT:    ; implicit-def: $vgpr1
-; CHECK-NEXT:    ; implicit-def: $vgpr0
-; CHECK-NEXT:  .LBB2_7: ; %Flow
-; CHECK-NEXT:    s_andn2_saveexec_b32 s12, s12
-; CHECK-NEXT:    s_cbranch_execz .LBB2_9
-; CHECK-NEXT:  ; %bb.8: ; %fail
+; CHECK-NEXT:    s_endpgm
+; CHECK-NEXT:  .LBB2_4: ; %fail
 ; CHECK-NEXT:    s_add_u32 s8, s8, 16
 ; CHECK-NEXT:    s_addc_u32 s9, s9, 0
-; CHECK-NEXT:    s_getpc_b64 s[20:21]
-; CHECK-NEXT:    s_add_u32 s20, s20, report_load@gotpcrel32@lo+4
-; CHECK-NEXT:    s_addc_u32 s21, s21, report_load@gotpcrel32@hi+12
+; CHECK-NEXT:    s_getpc_b64 s[12:13]
+; CHECK-NEXT:    s_add_u32 s12, s12, report_load@gotpcrel32@lo+4
+; CHECK-NEXT:    s_addc_u32 s13, s13, report_load@gotpcrel32@hi+12
 ; CHECK-NEXT:    v_lshlrev_b32_e32 v2, 20, v2
-; CHECK-NEXT:    s_load_dwordx2 s[20:21], s[20:21], 0x0
+; CHECK-NEXT:    s_load_dwordx2 s[20:21], s[12:13], 0x0
 ; CHECK-NEXT:    v_lshlrev_b32_e32 v1, 10, v1
 ; CHECK-NEXT:    v_mov_b32_e32 v3, 0
 ; CHECK-NEXT:    s_mov_b32 s12, s14
+; CHECK-NEXT:    s_mov_b32 s13, s15
 ; CHECK-NEXT:    s_mov_b32 s14, s16
-; CHECK-NEXT:    ; implicit-def: $sgpr15
 ; CHECK-NEXT:    v_or3_b32 v31, v0, v1, v2
 ; CHECK-NEXT:    v_mov_b32_e32 v0, s18
 ; CHECK-NEXT:    v_mov_b32_e32 v1, s19
 ; CHECK-NEXT:    v_mov_b32_e32 v2, 4
 ; CHECK-NEXT:    s_waitcnt lgkmcnt(0)
 ; CHECK-NEXT:    s_swappc_b64 s[30:31], s[20:21]
-; CHECK-NEXT:    ; divergent unreachable
-; CHECK-NEXT:  .LBB2_9: ; %UnifiedReturnBlock
-; CHECK-NEXT:    s_endpgm
 entry:
   %tid = call i32 @llvm.amdgcn.workitem.id.x()
   %odd = trunc i32 %tid to i1
