@@ -20,6 +20,7 @@
 #include "sanitizer_common/sanitizer_flags.h"
 #include "sanitizer_common/sanitizer_mutex.h"
 #include "sanitizer_common/sanitizer_offload.h"
+#include "sanitizer_common/sanitizer_stacktrace.h"
 
 using namespace __sanitizer;
 
@@ -47,6 +48,7 @@ void InitializeFlags() {
     CommonFlags Cf;
     Cf.CopyFrom(*common_flags());
     Cf.external_symbolizer_path = GetEnv("DASAN_SYMBOLIZER_PATH");
+    Cf.malloc_context_size = 30;
     OverrideCommonFlags(Cf);
   }
 
@@ -92,6 +94,17 @@ void Initialize() {
 }
 
 }  // namespace __dasan
+
+void __sanitizer::BufferedStackTrace::UnwindImpl(uptr pc, uptr bp,
+                                                 void* context,
+                                                 bool request_fast,
+                                                 u32 max_depth) {
+  uptr Top = 0;
+  uptr Bottom = 0;
+  GetThreadStackTopAndBottom(false, &Top, &Bottom);
+  bool Fast = StackTrace::WillUseFastUnwind(request_fast);
+  Unwind(max_depth, pc, bp, context, Top, Bottom, Fast);
+}
 
 SANITIZER_INTERFACE_WEAK_DEF(const char*, __dasan_default_options, void) {
   return "";

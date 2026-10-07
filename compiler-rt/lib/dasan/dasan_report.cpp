@@ -21,6 +21,7 @@
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_offload.h"
 #include "sanitizer_common/sanitizer_report_decorator.h"
+#include "sanitizer_common/sanitizer_stackdepot.h"
 #include "sanitizer_common/sanitizer_stacktrace_printer.h"
 #include "sanitizer_common/sanitizer_symbolizer.h"
 #include "shared/rpc.h"
@@ -35,6 +36,7 @@ class Decorator : public SanitizerCommonDecorator {
  public:
   const char* Access() { return Blue(); }
   const char* Location() { return Green(); }
+  const char* Allocation() { return Magenta(); }
 };
 }  // namespace
 
@@ -98,6 +100,66 @@ static void PrintDeviceStack(SymbolizedStack* Frames, uptr Pc) {
   Printf("%s", Out.data());
 }
 
+// The trace starts in the HSA interceptor. The next module is whoever called
+// it (HIP, the OpenMP plugin). That whole module is the nest under the
+// program's call. A direct call from the same module keeps every frame but
+// the interceptor.
+static uptr CallerNestEnd(const char** Mods, uptr N) {
+  if (!N)
+    return 0;
+  uptr Begin = 1;
+  if (Begin < N && Mods[0] && Mods[Begin] && Mods[Begin] != Mods[0]) {
+    const char* Wrap = Mods[Begin];
+    while (Begin < N && Mods[Begin] == Wrap) ++Begin;
+  }
+  return Begin;
+}
+
+static void PrintUserStack(const StackTrace& Stack) {
+  Symbolizer* Sym = Symbolizer::GetOrInit();
+  const char* Mods[kStackTraceMax];
+  uptr Pcs[kStackTraceMax];
+  uptr N = 0;
+  for (; N < Stack.size && Stack.trace[N] && N < kStackTraceMax; ++N) {
+    Pcs[N] = StackTrace::GetPreviousInstructionPc(Stack.trace[N]);
+    Mods[N] = Sym->GetModuleNameForPc(Pcs[N]);
+  }
+  const uptr Begin = CallerNestEnd(Mods, N);
+
+  InternalScopedString Out;
+  uptr Shown = 0;
+  StackTracePrinter* Printer = StackTracePrinter::GetOrInit();
+  for (uptr I = Begin; I < N; ++I) {
+    SymbolizedStack* Frames = Sym->SymbolizePC(Pcs[I]);
+    for (SymbolizedStack* F = Frames; F; F = F->next) {
+      uptr Was = Out.length();
+      Printer->RenderFrame(&Out, common_flags()->stack_trace_format, Shown,
+                           Pcs[I], &F->info, common_flags()->symbolize_vs_style,
+                           common_flags()->strip_path_prefix);
+      if (Out.length() != Was) {
+        Out.Append("\n");
+        ++Shown;
+      }
+    }
+    if (Frames)
+      Frames->ClearAll();
+  }
+  if (!Shown) {
+    Stack.Print();
+    return;
+  }
+  Out.Append("\n");
+  Printf("%s", Out.data());
+}
+
+static void PrintSite(const char* Verb, u32 Tid, u32 Id) {
+  if (!Id)
+    return;
+  Decorator D;
+  Printf("%s%s thread T%u here:%s\n", D.Allocation(), Verb, Tid, D.Default());
+  PrintUserStack(StackDepotGet(Id));
+}
+
 static void PrintGlobalLocation(uptr Addr, const GlobalInfo& G) {
   Decorator D;
   Printf("%s", D.Location());
@@ -154,8 +216,12 @@ static bool PrintReport(const __dasan_offload_report& R) {
     Printf(
         "the region is group memory, which every workgroup has its own copy "
         "of at these addresses\n");
-  if (Freed)
-    Printf("the region was freed by the host before this access\n");
+  if (!IsShared && !IsGlobal && Known) {
+    if (Freed)
+      PrintSite("freed by", A.FreeTid, A.FreeStack);
+    PrintSite(Freed ? "previously allocated by" : "allocated by", A.AllocTid,
+              A.AllocStack);
+  }
 
   if (Frames) {
     ReportErrorSummary(Bug, Frames->info);
@@ -196,13 +262,20 @@ u32 HandleOffloadReport(void* PortPtr, u32) {
   return rpc::RPC_SUCCESS;
 }
 
-void ReportInvalidFree(uptr Addr) {
+void ReportInvalidFree(uptr Addr, u32 Stack, u32 Tid) {
   AllocInfo A;
   bool Known = GetAllocator().Describe(Addr, &A);
   const char* Bug = Known && A.Freed ? "double-free" : "bad-free";
   PrintHeader(Bug, Addr, /*Pc=*/0);
+  if (Stack)
+    PrintUserStack(StackDepotGet(Stack));
   if (Known)
     PrintLocation(Addr, A.Beg, A.Size);
+  if (Known && A.Freed)
+    PrintSite("freed by", A.FreeTid, A.FreeStack);
+  if (Known)
+    PrintSite(A.Freed ? "previously allocated by" : "allocated by", A.AllocTid,
+              A.AllocStack);
   InternalScopedString S;
   S.AppendF("%s (%p)", Bug, (void*)Addr);
   ReportErrorSummary(S.data());

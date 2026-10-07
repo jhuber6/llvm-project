@@ -20,6 +20,8 @@ int main() {
 // CHECK: WRITE of size 4 at [[ADDR]] thread (0,0,0) of block (0,0,0)
 // CHECK: #0 {{0x[0-9a-f]+}} in write_past{{.*}}heap-overflow.hip
 // CHECK: [[ADDR]] is located 0 bytes after 256-byte region
+// CHECK: allocated by thread T{{[0-9]+}} here:
+// CHECK: heap-overflow.hip
 // CHECK: SUMMARY: DeviceAddressSanitizer: heap-buffer-overflow
 // CHECK: HINT: build with -fsanitize-recover=daddress
 

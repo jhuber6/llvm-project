@@ -14,14 +14,18 @@
 
 #include "dasan.h"
 #include "dasan_allocator.h"
+#include "dasan_flags.h"
 #include "dasan_image.h"
 #include "dasan_platform.h"
 #include "dasan_report.h"
 #include "interception/interception.h"
 #include "sanitizer_common/sanitizer_common.h"
 #include "sanitizer_common/sanitizer_libc.h"
+#include "sanitizer_common/sanitizer_mutex.h"
 #include "sanitizer_common/sanitizer_offload.h"
 #include "sanitizer_common/sanitizer_platform.h"
+#include "sanitizer_common/sanitizer_stackdepot.h"
+#include "sanitizer_common/sanitizer_stacktrace.h"
 
 #if !SANITIZER_LINUX
 #  error "the device address sanitizer is supported on Linux only"
@@ -106,6 +110,59 @@ INTERCEPTOR(hsa_status_t, hsa_shut_down, void) {
   return REAL(hsa_shut_down)();
 }
 
+INTERCEPTOR(hsa_status_t, hsa_executable_load_agent_code_object,
+            hsa_executable_t Executable, hsa_agent_t Agent,
+            hsa_code_object_reader_t Reader, const char* Options,
+            hsa_loaded_code_object_t* Loaded) {
+  DASAN_HSA_FORWARD(hsa_executable_load_agent_code_object, Executable, Agent,
+                    Reader, Options, Loaded);
+
+  if (!flags()->alias_globals || !Offload::Get().CanLoadAtAddress())
+    return REAL(hsa_executable_load_agent_code_object)(Executable, Agent,
+                                                       Reader, Options, Loaded);
+  if (!PlatformReady())
+    Bind();
+  if (!PlatformReady())
+    return REAL(hsa_executable_load_agent_code_object)(Executable, Agent,
+                                                       Reader, Options, Loaded);
+
+  uptr LoadSize = 0;
+  if (!Offload::Get().CodeObjectLoadSize(Reader, &LoadSize))
+    return REAL(hsa_executable_load_agent_code_object)(Executable, Agent,
+                                                       Reader, Options, Loaded);
+
+  uptr Addr = 0, Span = 0;
+  u64 Handle = 0;
+  {
+    Lock L(&DasanMutex);
+    if (!ReserveExecutable(Agent, LoadSize, &Addr, &Span, &Handle))
+      Addr = 0;
+  }
+  if (!Addr)
+    return REAL(hsa_executable_load_agent_code_object)(Executable, Agent,
+                                                       Reader, Options, Loaded);
+
+  hsa_loaded_code_object_t Local = {};
+  if (!Offload::Get().LoadCodeObjectAt(Executable, Agent, Reader, Options,
+                                       reinterpret_cast<void*>(Addr), Span,
+                                       Loaded ? Loaded : &Local)) {
+    VReport(1, "%s: load at 0x%zx failed; the image stays with the loader\n",
+            SanitizerToolName, Addr);
+    {
+      Lock L(&DasanMutex);
+      ReleaseExecutable(Addr, Span, Handle);
+    }
+    return REAL(hsa_executable_load_agent_code_object)(Executable, Agent,
+                                                       Reader, Options, Loaded);
+  }
+
+  Lock L(&DasanMutex);
+  NotePlacedCodeObject(Addr, LoadSize, Span, Handle);
+  VReport(1, "%s: loaded %zu bytes at 0x%zx\n", SanitizerToolName, LoadSize,
+          Addr);
+  return HSA_STATUS_SUCCESS;
+}
+
 INTERCEPTOR(hsa_status_t, hsa_executable_freeze, hsa_executable_t Executable,
             const char* Options) {
   DASAN_HSA_FORWARD(hsa_executable_freeze, Executable, Options);
@@ -156,8 +213,32 @@ INTERCEPTOR(hsa_status_t, hsa_executable_symbol_get_info,
   return Status;
 }
 
+static StaticSpinMutex TidMu;
+static ThreadID Tids[256];
+static u32 NTids;
+
+static u32 CompactTid() {
+  const ThreadID Os = GetTid();
+  SpinMutexLock L(&TidMu);
+  for (u32 I = 0; I < NTids; ++I)
+    if (Tids[I] == Os)
+      return I;
+  if (NTids == ARRAY_SIZE(Tids))
+    return 0;
+  Tids[NTids] = Os;
+  return NTids++;
+}
+
+static void CaptureSite(uptr Pc, uptr Bp, u32* Stack, u32* Tid) {
+  BufferedStackTrace Trace;
+  Trace.Unwind(Pc, Bp, nullptr, common_flags()->fast_unwind_on_malloc,
+               common_flags()->malloc_context_size);
+  *Stack = Trace.size ? StackDepotPut(Trace) : 0;
+  *Tid = CompactTid();
+}
+
 static bool PlaceAlloc(hsa_amd_memory_pool_t Pool, size_t Size, uint32_t Flags,
-                       void** Ptr) {
+                       void** Ptr, u32 Stack, u32 Tid) {
   if (!Size)
     return false;
   Lock L(&DasanMutex);
@@ -166,16 +247,16 @@ static bool PlaceAlloc(hsa_amd_memory_pool_t Pool, size_t Size, uint32_t Flags,
   DeviceId Device = DeviceForPool(Pool);
   if (!Device)
     return false;
-  uptr Placed = GetAllocator().Allocate(Device, Size, Flags);
+  uptr Placed = GetAllocator().Allocate(Device, Size, Flags, Stack, Tid);
   if (!Placed)
     return false;
   *Ptr = reinterpret_cast<void*>(Placed);
   return true;
 }
 
-static bool PlaceFree(void* Ptr) {
+static bool PlaceFree(void* Ptr, u32 Stack, u32 Tid) {
   Lock L(&DasanMutex);
-  return GetAllocator().Deallocate(reinterpret_cast<uptr>(Ptr));
+  return GetAllocator().Deallocate(reinterpret_cast<uptr>(Ptr), Stack, Tid);
 }
 
 static bool PlaceAllow(uptr Addr, const hsa_agent_t* Agents, u32 N,
@@ -199,7 +280,10 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_allocate,
       !Offload::Get().FineGrainVmem()) {
     return REAL(hsa_amd_memory_pool_allocate)(Pool, Size, Flags, Ptr);
   }
-  if (PlaceAlloc(Pool, Size, Flags, Ptr))
+  GET_CURRENT_PC_BP;
+  u32 Stack, Tid;
+  CaptureSite(pc, bp, &Stack, &Tid);
+  if (PlaceAlloc(Pool, Size, Flags, Ptr, Stack, Tid))
     return HSA_STATUS_SUCCESS;
   // Unplaced pointers sit outside the checked window, including fine-grain
   // pools the running runtime cannot back with virtual memory.
@@ -209,7 +293,10 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_allocate,
 INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_free, void* Ptr) {
   DASAN_HSA_FORWARD(hsa_amd_memory_pool_free, Ptr);
 
-  if (PlaceFree(Ptr))
+  GET_CURRENT_PC_BP;
+  u32 Stack, Tid;
+  CaptureSite(pc, bp, &Stack, &Tid);
+  if (PlaceFree(Ptr, Stack, Tid))
     return HSA_STATUS_SUCCESS;
   return REAL(hsa_amd_memory_pool_free)(Ptr);
 }
@@ -219,7 +306,10 @@ INTERCEPTOR(hsa_status_t, hsa_memory_allocate, hsa_region_t Region, size_t Size,
   DASAN_HSA_FORWARD(hsa_memory_allocate, Region, Size, Ptr);
 
   // ROCr's region handle is the pool handle.
-  if (PlaceAlloc({Region.handle}, Size, 0, Ptr))
+  GET_CURRENT_PC_BP;
+  u32 Stack, Tid;
+  CaptureSite(pc, bp, &Stack, &Tid);
+  if (PlaceAlloc({Region.handle}, Size, 0, Ptr, Stack, Tid))
     return HSA_STATUS_SUCCESS;
   return REAL(hsa_memory_allocate)(Region, Size, Ptr);
 }
@@ -227,7 +317,10 @@ INTERCEPTOR(hsa_status_t, hsa_memory_allocate, hsa_region_t Region, size_t Size,
 INTERCEPTOR(hsa_status_t, hsa_memory_free, void* Ptr) {
   DASAN_HSA_FORWARD(hsa_memory_free, Ptr);
 
-  if (PlaceFree(Ptr))
+  GET_CURRENT_PC_BP;
+  u32 Stack, Tid;
+  CaptureSite(pc, bp, &Stack, &Tid);
+  if (PlaceFree(Ptr, Stack, Tid))
     return HSA_STATUS_SUCCESS;
   return REAL(hsa_memory_free)(Ptr);
 }

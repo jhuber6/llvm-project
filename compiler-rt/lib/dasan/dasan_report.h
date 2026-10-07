@@ -22,7 +22,7 @@ using namespace __sanitizer;
 
 u32 HandleOffloadReport(void* Port, u32 Lanes);
 
-void ReportInvalidFree(uptr Addr);
+void ReportInvalidFree(uptr Addr, u32 Stack, u32 Tid);
 
 void PrintStats();
 

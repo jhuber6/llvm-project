@@ -27,6 +27,10 @@ struct AllocInfo {
   uptr Size;
   DeviceId Device;
   bool Freed;
+  u32 AllocStack;
+  u32 FreeStack;
+  u32 AllocTid;
+  u32 FreeTid;
 };
 
 class Allocator {
@@ -38,14 +42,15 @@ class Allocator {
     return Reserved && !Broken && PointerIsMine(Addr);
   }
 
-  uptr Allocate(DeviceId Device, uptr Size, u32 AllocFlags = 0);
+  uptr Allocate(DeviceId Device, uptr Size, u32 AllocFlags = 0, u32 Stack = 0,
+                u32 Tid = 0);
 
   // Contiguous ClassId chunks, no backing. Images use class 0; heap never
   // chooses it (alignment bump is larger than a class-0 chunk).
   uptr Allocate(DeviceId Device, uptr Size, uptr ClassId);
   void Deallocate(uptr Addr, uptr Size, uptr ClassId);
 
-  bool Deallocate(uptr Addr);
+  bool Deallocate(uptr Addr, u32 Stack = 0, u32 Tid = 0);
 
   bool Describe(uptr Addr, AllocInfo* Out) const;
 
@@ -71,6 +76,10 @@ class Allocator {
     bool Live;
     u64 Backed;
     u32 Slot;
+    u32 AllocStack;
+    u32 FreeStack;
+    u32 AllocTid;
+    u32 FreeTid;
   };
 
   struct Slot {

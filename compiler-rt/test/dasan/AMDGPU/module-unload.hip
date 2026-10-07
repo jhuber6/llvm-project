@@ -38,6 +38,6 @@ int main(int argc, char **argv) {
 extern "C" __global__ void touch() {}
 #endif
 
-// CHECK: aliased {{0x[0-9a-f]+}} (+{{[0-9]+}}) at [[ALIAS:0x[0-9a-f]+]]
+// CHECK: {{(aliased|placed)}} {{0x[0-9a-f]+}} (+{{[0-9]+}}) at [[ALIAS:0x[0-9a-f]+]]
 // CHECK: released {{0x[0-9a-f]+}} (+{{[0-9]+}}) at [[ALIAS]]
-// CHECK: aliased {{0x[0-9a-f]+}} (+{{[0-9]+}}) at [[ALIAS]]
+// CHECK: {{(aliased|placed)}} {{0x[0-9a-f]+}} (+{{[0-9]+}}) at [[ALIAS]]

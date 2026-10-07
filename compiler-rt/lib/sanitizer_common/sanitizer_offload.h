@@ -79,6 +79,16 @@ class Offload {
 
   bool HasVirtualMemory() const;
   bool FineGrainVmem() const;
+  // Loader extension 1.04 can place a code object in an executable mapping.
+  bool CanLoadAtAddress() const;
+  // An imported dma-buf can be executed through AMD extension 1.15. The VA map
+  // that replaced it does not set execute.
+  bool DmaBufAliasExecutable() const;
+  bool CodeObjectLoadSize(hsa_code_object_reader_t Reader, uptr* Size) const;
+  bool LoadCodeObjectAt(hsa_executable_t Exec, hsa_agent_t Agent,
+                        hsa_code_object_reader_t Reader, const char* Options,
+                        void* Address, uptr Size,
+                        hsa_loaded_code_object_t* Loaded) const;
   bool ReserveAddress(uptr Addr, uptr Size);
   void FreeAddress(uptr Addr, uptr Size);
   bool CreateHandle(hsa_amd_memory_pool_t Pool, uptr Size, u64 Flags,
@@ -156,6 +166,7 @@ class Offload {
                         void (*Fn)(const CodeObject&, void*), void* Arg);
 
   u16 AmdExtMinor{};
+  u16 LoaderMinor{};
 
   Device HostDevice{};
   InternalMmapVectorNoCtor<Device> DeviceList{};

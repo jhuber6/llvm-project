@@ -6,8 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// On freeze: describe globals, keep the dma-buf alias. ELF is only the
-// symbol table in the loader's storage blob.
+// On a loader that can place code, the image is loaded into an executable
+// mapping. Older runtimes export the loader's copy through dma-buf and map
+// that into the same window. From AMD extension 1.16 that alias is not
+// executable, so the image stays with the loader. ELF is only the symbol
+// table in the storage blob.
 //
 //===----------------------------------------------------------------------===//
 
@@ -42,7 +45,9 @@ struct AliasedImage {
   uptr LoadBase;
   uptr LoadSize;
   uptr Alias;
+  uptr MapSize;
   u64 Handle;
+  bool Described;
 };
 
 struct ImageStats {
@@ -199,28 +204,52 @@ void ForgetGlobals(uptr Beg, uptr Size) {
   Globals.resize(Dst);
 }
 
-bool AlreadyAliased(uptr LoadBase) {
-  for (uptr I = 0; I < Images.size(); ++I)
-    if (Images[I].LoadBase == LoadBase)
-      return true;
-  return false;
-}
-
 void DropImage(uptr I) {
   AliasedImage& Img = Images[I];
-  VaUnmap(Img.Alias, Img.LoadSize);
+  VaUnmap(Img.Alias, Img.MapSize);
   VaDestroy(Img.Handle);
-  GetAllocator().Deallocate(Img.Alias, Img.LoadSize, 0);
+  GetAllocator().Deallocate(Img.Alias, Img.MapSize, 0);
   ForgetGlobals(Img.Alias, Img.LoadSize);
   if (I + 1 != Images.size())
     Images[I] = Images.back();
   Images.pop_back();
 }
 
+void DescribePlaced(AliasedImage* Img, const Offload::CodeObject& Obj) {
+  if (Img->Described)
+    return;
+  ImageStats Stats = {};
+  DescribeGlobals(Img->Alias, Obj.LoadSize, Obj.Storage, Obj.StorageSize,
+                  &Stats);
+  Img->Described = true;
+  VReport(1,
+          "%s: placed 0x%zx (+%zu) at 0x%zx; %zu globals described, %zu "
+          "chunks shared\n",
+          SanitizerToolName, Img->LoadBase, Img->LoadSize, Img->Alias,
+          Stats.Described, Stats.Shared);
+}
+
 // Map the code object a second time inside class zero, sharing its memory.
 void AliasCodeObject(const Offload::CodeObject& Obj) {
+  for (AliasedImage& Img : Images) {
+    if (Img.LoadBase != Obj.LoadBase)
+      continue;
+    DescribePlaced(&Img, Obj);
+    return;
+  }
+
+  // The placed path records the image before freeze. Reaching here means the
+  // loader owns the mapping, and a dma-buf alias of it cannot be executed.
+  if (!Offload::Get().DmaBufAliasExecutable()) {
+    VReport(1,
+            "%s: leaving 0x%zx (+%zu) with the loader; a dma-buf alias is not "
+            "executable\n",
+            SanitizerToolName, Obj.LoadBase, Obj.LoadSize);
+    return;
+  }
+
   DeviceId Device = DeviceForAgent(Obj.Agent);
-  if (!Device || AlreadyAliased(Obj.LoadBase))
+  if (!Device)
     return;
 
   Allocator& A = GetAllocator();
@@ -247,7 +276,8 @@ void AliasCodeObject(const Offload::CodeObject& Obj) {
 
   ImageStats Stats = {};
   DescribeGlobals(Alias, Obj.LoadSize, Obj.Storage, Obj.StorageSize, &Stats);
-  Images.push_back({Obj.LoadBase, Obj.LoadSize, Alias, Handle});
+  Images.push_back(
+      {Obj.LoadBase, Obj.LoadSize, Alias, Obj.LoadSize, Handle, true});
   VReport(1,
           "%s: aliased 0x%zx (+%zu) at 0x%zx; %zu globals described, %zu "
           "chunks shared\n",
@@ -256,6 +286,43 @@ void AliasCodeObject(const Offload::CodeObject& Obj) {
 }
 
 }  // namespace
+
+bool ReserveExecutable(hsa_agent_t Agent, uptr LoadSize, uptr* Addr, uptr* Span,
+                       u64* Handle) {
+  DeviceId Device = DeviceForAgent(Agent);
+  if (!Device || !LoadSize)
+    return false;
+  uptr Granule = VaGranule();
+  if (!Granule)
+    Granule = GetPageSizeCached();
+  const uptr MapSize = RoundUpTo(LoadSize, Granule);
+  Allocator& A = GetAllocator();
+  uptr Alias = A.Allocate(Device, MapSize, uptr(0));
+  if (!Alias)
+    return false;
+  u64 H = 0;
+  if (!VaCreate(Device, MapSize, HSA_AMD_VMEM_HANDLE_CREATE_EXECUTABLE, &H) ||
+      !VaMap(Alias, MapSize, H, /*ReadOnly=*/false, Device)) {
+    if (H)
+      VaDestroy(H);
+    A.Deallocate(Alias, MapSize, 0);
+    return false;
+  }
+  *Addr = Alias;
+  *Span = MapSize;
+  *Handle = H;
+  return true;
+}
+
+void ReleaseExecutable(uptr Addr, uptr Span, u64 Handle) {
+  VaUnmap(Addr, Span);
+  VaDestroy(Handle);
+  GetAllocator().Deallocate(Addr, Span, 0);
+}
+
+void NotePlacedCodeObject(uptr Addr, uptr LoadSize, uptr MapSize, u64 Handle) {
+  Images.push_back({Addr, LoadSize, Addr, MapSize, Handle, false});
+}
 
 void AliasExecutable(hsa_executable_t Exec) {
   if (!flags()->alias_globals || !PlatformReady())

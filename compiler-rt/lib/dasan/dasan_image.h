@@ -27,6 +27,14 @@ struct GlobalInfo {
   const char* Name;
 };
 
+// Record a code object already loaded at Addr. MapSize is the mapping.
+void NotePlacedCodeObject(uptr Addr, uptr LoadSize, uptr MapSize, u64 Handle);
+
+// Carve an executable mapping large enough for LoadSize. Empty on failure.
+bool ReserveExecutable(hsa_agent_t Agent, uptr LoadSize, uptr* Addr, uptr* Span,
+                       u64* Handle);
+void ReleaseExecutable(uptr Addr, uptr Span, u64 Handle);
+
 void AliasExecutable(hsa_executable_t Exec);
 void UnaliasExecutable(hsa_executable_t Exec);
 void UnaliasAll();

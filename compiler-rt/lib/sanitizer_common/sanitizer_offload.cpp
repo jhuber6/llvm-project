@@ -187,8 +187,26 @@ bool Offload::Discover() {
 // Initialize the HSA loader extension used to manage host addresses.
 bool Offload::BindLoader() {
   Loader = {};
+  // Older runtimes reject a table larger than the one they publish.
+  const uptr Prefix = offsetof(LoaderApi, GetLoadSize);
   CheckHsa(Api.hsa_system_get_major_extension_table(HSA_EXTENSION_AMD_LOADER, 1,
-                                                    sizeof(Loader), &Loader));
+                                                    Prefix, &Loader));
+  uint16_t Minor = 0;
+  bool Supported = false;
+  if (Api.hsa_system_major_extension_supported(HSA_EXTENSION_AMD_LOADER, 1,
+                                               &Minor, &Supported) ==
+          HSA_STATUS_SUCCESS &&
+      Supported && Minor >= 4) {
+    LoaderApi104 Table = {};
+    if (Api.hsa_system_get_major_extension_table(HSA_EXTENSION_AMD_LOADER, 1,
+                                                 sizeof(Table), &Table) ==
+            HSA_STATUS_SUCCESS &&
+        Table.GetLoadSize && Table.LoadAtAddress) {
+      Loader.GetLoadSize = Table.GetLoadSize;
+      Loader.LoadAtAddress = Table.LoadAtAddress;
+      LoaderMinor = Minor;
+    }
+  }
   return Loader.QueryHostAddress && Loader.IterateLoadedCodeObjects &&
          Loader.GetCodeObjectInfo;
 }
@@ -270,8 +288,10 @@ bool Offload::Init() {
   if (Api.hsa_system_get_info(HSA_AMD_SYSTEM_INFO_EXT_VERSION_MINOR, &Minor) ==
       HSA_STATUS_SUCCESS)
     AmdExtMinor = Minor;
-  VReport(1, "%s: device reporting on %zu GPU(s), AMD extension 1.%u\n",
-          SanitizerToolName, DeviceList.size(), AmdExtMinor);
+  VReport(1,
+          "%s: device reporting on %zu GPU(s), AMD extension 1.%u, "
+          "loader 1.%u\n",
+          SanitizerToolName, DeviceList.size(), AmdExtMinor, LoaderMinor);
   atomic_store(&Active, 1, memory_order_release);
   return true;
 }
@@ -297,6 +317,7 @@ void Offload::Teardown() {
   PoolList.clear();
   HostDevice = {};
   AmdExtMinor = 0;
+  LoaderMinor = 0;
 }
 
 void Offload::Shutdown() {
@@ -479,6 +500,31 @@ bool Offload::CanAccess(hsa_agent_t Agent, hsa_amd_memory_pool_t Pool) {
 }
 
 bool Offload::FineGrainVmem() const { return AmdExtMinor >= 33; }
+
+bool Offload::CanLoadAtAddress() const {
+  return Loader.GetLoadSize && Loader.LoadAtAddress;
+}
+
+bool Offload::DmaBufAliasExecutable() const { return AmdExtMinor < 16; }
+
+bool Offload::CodeObjectLoadSize(hsa_code_object_reader_t Reader,
+                                 uptr* Size) const {
+  size_t Bytes = 0;
+  if (!Loader.GetLoadSize ||
+      Loader.GetLoadSize(Reader, &Bytes) != HSA_STATUS_SUCCESS || !Bytes)
+    return false;
+  *Size = (uptr)Bytes;
+  return true;
+}
+
+bool Offload::LoadCodeObjectAt(hsa_executable_t Exec, hsa_agent_t Agent,
+                               hsa_code_object_reader_t Reader,
+                               const char* Options, void* Address, uptr Size,
+                               hsa_loaded_code_object_t* Loaded) const {
+  return Loader.LoadAtAddress &&
+         Loader.LoadAtAddress(Exec, Agent, Reader, Options, Address, Size,
+                              Loaded) == HSA_STATUS_SUCCESS;
+}
 
 bool Offload::HasVirtualMemory() const {
 #define SANITIZER_HSA_PRESENT(Name) &&Api.Name

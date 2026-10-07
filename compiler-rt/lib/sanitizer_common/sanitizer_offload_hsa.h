@@ -32,6 +32,7 @@
   X(hsa_amd_agent_memory_pool_get_info)   \
   X(hsa_amd_agent_iterate_memory_pools)   \
   X(hsa_system_get_major_extension_table) \
+  X(hsa_system_major_extension_supported) \
   X(hsa_queue_create)                     \
   X(hsa_queue_destroy)                    \
   X(hsa_queue_add_write_index_screlease)  \
@@ -73,6 +74,9 @@ typedef struct hsa_signal_s {
 typedef struct hsa_loaded_code_object_s {
   uint64_t handle;
 } hsa_loaded_code_object_t;
+typedef struct hsa_code_object_reader_s {
+  uint64_t handle;
+} hsa_code_object_reader_t;
 typedef struct hsa_region_s {
   uint64_t handle;
 } hsa_region_t;
@@ -120,6 +124,12 @@ typedef enum {
 typedef enum {
   HSA_AMD_MEMORY_POOL_PCIE_FLAG = 1,
 } hsa_amd_memory_pool_flag_t;
+
+// Flag bit of hsa_amd_vmem_handle_create. Present when the loader extension
+// can place a code object in a caller-owned mapping.
+typedef enum {
+  HSA_AMD_VMEM_HANDLE_CREATE_EXECUTABLE = 1,
+} hsa_amd_vmem_handle_create_flag_t;
 
 typedef enum {
   HSA_AMD_SYSTEM_INFO_EXT_VERSION_MAJOR = 0x207,
@@ -254,7 +264,8 @@ typedef enum {
   HSA_VEN_AMD_LOADER_CODE_OBJECT_STORAGE_TYPE_MEMORY = 2,
 } hsa_ven_amd_loader_code_object_storage_type_t;
 
-// Version 1.01 of HSA_EXTENSION_AMD_LOADER. Slot order is the extension ABI.
+// Version 1.01 of HSA_EXTENSION_AMD_LOADER, then the 1.04 slots. The prefix
+// size is what older runtimes accept; the two functions arrived in 1.04.
 struct LoaderApi {
   hsa_status_t (*QueryHostAddress)(const void*, const void**);
   void* UnusedQuerySegmentDescriptors;
@@ -266,8 +277,23 @@ struct LoaderApi {
   hsa_status_t (*GetCodeObjectInfo)(
       hsa_loaded_code_object_t, hsa_ven_amd_loader_loaded_code_object_info_t,
       void*);
+  hsa_status_t (*GetLoadSize)(hsa_code_object_reader_t, size_t*);
+  hsa_status_t (*LoadAtAddress)(hsa_executable_t, hsa_agent_t,
+                                hsa_code_object_reader_t, const char*, void*,
+                                size_t, hsa_loaded_code_object_t*);
 };
-static_assert(sizeof(LoaderApi) == 5 * sizeof(void*), "layout drift");
+static_assert(offsetof(LoaderApi, GetLoadSize) == 5 * sizeof(void*),
+              "layout drift");
+
+// Full 1.04 table. Slots 5 and 6 are 1.02 and 1.03 and are not used here.
+struct LoaderApi104 {
+  void* Slot[7];
+  hsa_status_t (*GetLoadSize)(hsa_code_object_reader_t, size_t*);
+  hsa_status_t (*LoadAtAddress)(hsa_executable_t, hsa_agent_t,
+                                hsa_code_object_reader_t, const char*, void*,
+                                size_t, hsa_loaded_code_object_t*);
+};
+static_assert(sizeof(LoaderApi104) == 9 * sizeof(void*), "layout drift");
 
 hsa_status_t hsa_init(void);
 hsa_status_t hsa_shut_down(void);
@@ -333,6 +359,14 @@ hsa_status_t hsa_system_get_major_extension_table(uint16_t extension,
                                                   uint16_t version_major,
                                                   size_t table_length,
                                                   void* table);
+hsa_status_t hsa_system_major_extension_supported(uint16_t extension,
+                                                  uint16_t version_major,
+                                                  uint16_t* version_minor,
+                                                  bool* result);
+hsa_status_t hsa_executable_load_agent_code_object(
+    hsa_executable_t executable, hsa_agent_t agent,
+    hsa_code_object_reader_t code_object_reader, const char* options,
+    hsa_loaded_code_object_t* loaded_code_object);
 hsa_status_t hsa_memory_copy(void* dst, const void* src, size_t size);
 hsa_status_t hsa_memory_allocate(hsa_region_t region, size_t size, void** ptr);
 hsa_status_t hsa_memory_free(void* ptr);

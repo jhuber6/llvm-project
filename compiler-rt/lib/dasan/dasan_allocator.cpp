@@ -345,7 +345,8 @@ void Allocator::Shutdown() {
   Initialized = false;
 }
 
-uptr Allocator::Allocate(DeviceId Device, uptr Size, u32 AllocFlags) {
+uptr Allocator::Allocate(DeviceId Device, uptr Size, u32 AllocFlags, u32 Stack,
+                         u32 Tid) {
   if (!Reserved || Broken) {
     ++NumPassedInactive;
     return 0;
@@ -381,6 +382,10 @@ uptr Allocator::Allocate(DeviceId Device, uptr Size, u32 AllocFlags) {
     S.Size = Size;
     S.Offset = Offset;
     S.Live = true;
+    S.AllocStack = Stack;
+    S.FreeStack = 0;
+    S.AllocTid = Tid;
+    S.FreeTid = 0;
     SetEntry(ClassId, ChunkIdx, MakeEntry(Size, Offset));
     Publish();
 
@@ -449,6 +454,8 @@ uptr Allocator::Allocate(DeviceId Device, uptr Size, uptr ClassId) {
     S.Size = I == First ? Size : 0;
     S.Offset = 0;
     S.Backed = 0;
+    S.AllocStack = S.FreeStack = 0;
+    S.AllocTid = S.FreeTid = 0;
   }
   ++NumImages;
   NumImageChunks += Need;
@@ -483,7 +490,7 @@ void Allocator::Deallocate(uptr Addr, uptr Size, uptr ClassId) {
     --NumImages;
 }
 
-bool Allocator::Deallocate(uptr Addr) {
+bool Allocator::Deallocate(uptr Addr, u32 Stack, u32 Tid) {
   if (!IsPlaced(Addr))
     return false;
 
@@ -495,11 +502,13 @@ bool Allocator::Deallocate(uptr Addr) {
 
   ChunkState& S = SC.Chunks[ChunkIdx];
   if (!S.Live || Addr != ChunkBeg(ClassId, ChunkIdx) + S.Offset) {
-    ReportInvalidFree(Addr);
+    ReportInvalidFree(Addr, Stack, Tid);
     return true;
   }
 
   S.Live = false;
+  S.FreeStack = Stack;
+  S.FreeTid = Tid;
   SetEntry(ClassId, ChunkIdx, PoisonEntry(MakeEntry(0, S.Offset)));
   Publish();
 
@@ -531,6 +540,10 @@ bool Allocator::Describe(uptr Addr, AllocInfo* Out) const {
   Out->Size = S.Size;
   Out->Device = Classes[ClassId].Slots[S.Slot].Device;
   Out->Freed = !S.Live;
+  Out->AllocStack = S.AllocStack;
+  Out->FreeStack = S.FreeStack;
+  Out->AllocTid = S.AllocTid;
+  Out->FreeTid = S.FreeTid;
   return S.Size != 0;
 }
 

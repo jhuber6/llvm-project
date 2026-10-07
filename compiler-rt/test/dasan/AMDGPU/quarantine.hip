@@ -28,5 +28,8 @@ int main(int argc, char **argv) {
 // CHECK: ERROR: DeviceAddressSanitizer: heap-use-after-free on address [[ADDR:0x[0-9a-f]+]]
 // CHECK: WRITE of size 4 at [[ADDR]]
 // CHECK: #0 {{0x[0-9a-f]+}} in write_one{{.*}}quarantine.hip
-// CHECK: the region was freed by the host before this access
+// CHECK: freed by thread T{{[0-9]+}} here:
+// CHECK: quarantine.hip
+// CHECK: previously allocated by thread T{{[0-9]+}} here:
+// CHECK: quarantine.hip
 // CHECK: SUMMARY: DeviceAddressSanitizer: heap-use-after-free
