@@ -162,10 +162,10 @@ bool PlatformInit() {
   // Host pools stay unplaced: a code object allocated there must keep its
   // loader address or the kernel sees one fat heap object instead of
   // per-global entries.
-  const u32 Placeable =
-      HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_COARSE_GRAINED |
-      HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED |
-      HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_EXTENDED_SCOPE_FINE_GRAINED;
+  u32 Placeable = HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_COARSE_GRAINED;
+  if (Off.FineGrainVmem())
+    Placeable |= HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED |
+                 HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_EXTENDED_SCOPE_FINE_GRAINED;
   for (const Offload::MemoryPool& P : Off.Pools()) {
     if (!Off.IsGpu(P.Agent)) {
       if ((P.Flags & HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED) &&
@@ -196,9 +196,10 @@ bool PlatformInit() {
             SanitizerToolName);
     return false;
   }
-  VReport(1, "%s: %zu placeable pools, granule %zu%s\n", SanitizerToolName,
+  VReport(1, "%s: %zu placeable pools, granule %zu%s%s\n", SanitizerToolName,
           S.Pools.size(), S.Granule,
-          S.CpuDirect ? "" : ", host copies metadata");
+          S.CpuDirect ? "" : ", host copies metadata",
+          Off.FineGrainVmem() ? ", fine-grain vmem" : "");
   S.Bound = true;
   return true;
 }

@@ -20,6 +20,7 @@
 
 #define SANITIZER_HSA_FUNCTIONS(X)        \
   X(hsa_iterate_agents)                   \
+  X(hsa_system_get_info)                  \
   X(hsa_agent_get_info)                   \
   X(hsa_executable_get_symbol_by_name)    \
   X(hsa_executable_symbol_get_info)       \
@@ -113,6 +114,17 @@ typedef enum {
   HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_COARSE_GRAINED = 4,
   HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_EXTENDED_SCOPE_FINE_GRAINED = 8,
 } hsa_amd_memory_pool_global_flag_t;
+
+// Point-to-point fine grain. hsa_amd_vmem_handle_create ignores it until the
+// AMD extension minor that honors pool flags on the virtual-memory path.
+typedef enum {
+  HSA_AMD_MEMORY_POOL_PCIE_FLAG = 1,
+} hsa_amd_memory_pool_flag_t;
+
+typedef enum {
+  HSA_AMD_SYSTEM_INFO_EXT_VERSION_MAJOR = 0x207,
+  HSA_AMD_SYSTEM_INFO_EXT_VERSION_MINOR = 0x208,
+} hsa_system_info_t;
 
 typedef enum {
   HSA_AMD_MEMORY_POOL_ACCESS_NEVER_ALLOWED = 0,
@@ -259,6 +271,7 @@ static_assert(sizeof(LoaderApi) == 5 * sizeof(void*), "layout drift");
 
 hsa_status_t hsa_init(void);
 hsa_status_t hsa_shut_down(void);
+hsa_status_t hsa_system_get_info(hsa_system_info_t attribute, void* value);
 hsa_status_t hsa_iterate_agents(hsa_status_t (*callback)(hsa_agent_t, void*),
                                 void* data);
 hsa_status_t hsa_agent_get_info(hsa_agent_t agent, hsa_agent_info_t attribute,

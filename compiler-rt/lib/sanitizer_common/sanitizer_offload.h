@@ -78,6 +78,7 @@ class Offload {
   }
 
   bool HasVirtualMemory() const;
+  bool FineGrainVmem() const;
   bool ReserveAddress(uptr Addr, uptr Size);
   void FreeAddress(uptr Addr, uptr Size);
   bool CreateHandle(hsa_amd_memory_pool_t Pool, uptr Size, u64 Flags,
@@ -153,6 +154,8 @@ class Offload {
   void ForEachAgentObject(hsa_executable_t Exec, Cb F);
   void VisitCodeObjects(hsa_executable_t Exec,
                         void (*Fn)(const CodeObject&, void*), void* Arg);
+
+  u16 AmdExtMinor{};
 
   Device HostDevice{};
   InternalMmapVectorNoCtor<Device> DeviceList{};

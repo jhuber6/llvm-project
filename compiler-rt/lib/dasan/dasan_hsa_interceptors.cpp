@@ -193,10 +193,16 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_allocate,
             void** Ptr) {
   DASAN_HSA_FORWARD(hsa_amd_memory_pool_allocate, Pool, Size, Flags, Ptr);
 
+  // PCIE asks for point-to-point fine grain. A runtime that does not honor
+  // that flag on vmem would place a coarse copy of a fine-grain request.
+  if ((Flags & HSA_AMD_MEMORY_POOL_PCIE_FLAG) &&
+      !Offload::Get().FineGrainVmem()) {
+    return REAL(hsa_amd_memory_pool_allocate)(Pool, Size, Flags, Ptr);
+  }
   if (PlaceAlloc(Pool, Size, Flags, Ptr))
     return HSA_STATUS_SUCCESS;
   // Unplaced pointers sit outside the checked window, including fine-grain
-  // pools whose vmem path the runtime does not yet support.
+  // pools the running runtime cannot back with virtual memory.
   return REAL(hsa_amd_memory_pool_allocate)(Pool, Size, Flags, Ptr);
 }
 

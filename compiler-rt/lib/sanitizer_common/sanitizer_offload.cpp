@@ -266,8 +266,12 @@ bool Offload::Init() {
     --Refs;
     return false;
   }
-  VReport(1, "%s: device reporting on %zu GPU(s)\n", SanitizerToolName,
-          DeviceList.size());
+  u16 Minor = 0;
+  if (Api.hsa_system_get_info(HSA_AMD_SYSTEM_INFO_EXT_VERSION_MINOR, &Minor) ==
+      HSA_STATUS_SUCCESS)
+    AmdExtMinor = Minor;
+  VReport(1, "%s: device reporting on %zu GPU(s), AMD extension 1.%u\n",
+          SanitizerToolName, DeviceList.size(), AmdExtMinor);
   atomic_store(&Active, 1, memory_order_release);
   return true;
 }
@@ -292,6 +296,7 @@ void Offload::Teardown() {
   CpuList.clear();
   PoolList.clear();
   HostDevice = {};
+  AmdExtMinor = 0;
 }
 
 void Offload::Shutdown() {
@@ -472,6 +477,8 @@ bool Offload::CanAccess(hsa_agent_t Agent, hsa_amd_memory_pool_t Pool) {
              HSA_STATUS_SUCCESS &&
          Access != HSA_AMD_MEMORY_POOL_ACCESS_NEVER_ALLOWED;
 }
+
+bool Offload::FineGrainVmem() const { return AmdExtMinor >= 33; }
 
 bool Offload::HasVirtualMemory() const {
 #define SANITIZER_HSA_PRESENT(Name) &&Api.Name
