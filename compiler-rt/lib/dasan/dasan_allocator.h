@@ -45,8 +45,8 @@ class Allocator {
   uptr Allocate(DeviceId Device, uptr Size, u32 AllocFlags = 0, u32 Stack = 0,
                 u32 Tid = 0);
 
-  // Contiguous ClassId chunks, no backing. Images use class 0; heap never
-  // chooses it (alignment bump is larger than a class-0 chunk).
+  // Contiguous ClassId chunks, no backing. Images use class 0. A heap chunk
+  // is at least the pointer alignment, so class 0 stays the image span.
   uptr Allocate(DeviceId Device, uptr Size, uptr ClassId);
   void Deallocate(uptr Addr, uptr Size, uptr ClassId);
 
@@ -95,6 +95,9 @@ class Allocator {
     InternalMmapVectorNoCtor<Slot> Slots;
     uptr NextChunk;
     uptr EntryBytes;
+    // Device that owns the metadata granule NextChunk is in.
+    DeviceId GranuleDevice;
+    bool GranuleSet;
   };
 
   SizeClass Classes[kNumSizeClasses];
@@ -121,6 +124,9 @@ class Allocator {
     return ClassIdToSize(ClassId) <= Granule;
   }
   uptr RunChunks(uptr ClassId) const;
+  // The next device starts on a fresh metadata granule. Entry loads stay on
+  // the device that owns the object; the skipped indices are VA only.
+  void SeparateGranule(uptr ClassId, DeviceId Device);
 
   uptr FindSlot(uptr ClassId, DeviceId Device);
   bool CreateEntries(DeviceId Prefer, uptr Bytes, u64* Handle, DeviceId* Home);
@@ -141,7 +147,7 @@ Allocator& GetAllocator();
 
 uptr LeadingRedzone(uptr Size, uptr ChunkSize, uptr Alignment);
 
-uptr ChooseClass(uptr Size);
+uptr ChooseClass(uptr Size, uptr Alignment);
 
 }  // namespace __dasan
 

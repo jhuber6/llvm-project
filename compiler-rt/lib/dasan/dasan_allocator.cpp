@@ -33,14 +33,24 @@ static const uptr kRunBytes = 1 << 21;
 
 static_assert(kMaxRedzone <= kOffsetMax, "a redzone can outgrow its entry");
 
-static_assert(kAllocAlignment + 2 * kMinRedzone > (1ULL << kMinSizeLog),
-              "class 0 is the image class; heap must not choose it");
+static_assert(
+    kAllocAlignment > (1ULL << kMinSizeLog),
+    "class 0 is the image span; a heap chunk is at least the alignment");
 
-uptr ChooseClass(uptr Size) {
-  uptr ClassId = ClassID(Size + kAllocAlignment);
-  if (ClassId >= kNumSizeClasses)
-    ClassId = ClassID(Size);
-  return ClassId;
+uptr ChooseClass(uptr Size, uptr Alignment) {
+  if (!Alignment)
+    Alignment = kAllocAlignment;
+  for (uptr ClassId = 0; ClassId < kNumSizeClasses; ++ClassId) {
+    const uptr Chunk = ClassIdToSize(ClassId);
+    // The chunk base is aligned to the chunk. A smaller chunk cannot hold
+    // an Alignment-aligned pointer.
+    if (Chunk < Alignment)
+      continue;
+    const uptr Off = LeadingRedzone(Size, Chunk, Alignment);
+    if (Off + Size + kMinRedzone <= Chunk)
+      return ClassId;
+  }
+  return kNumSizeClasses;
 }
 
 uptr LeadingRedzone(uptr Size, uptr ChunkSize, uptr Alignment) {
@@ -55,6 +65,30 @@ uptr Allocator::RunChunks(uptr ClassId) const {
     return 1;
   uptr Bytes = Granule > kRunBytes ? Granule : kRunBytes;
   return Bytes / ClassIdToSize(ClassId);
+}
+
+void Allocator::SeparateGranule(uptr ClassId, DeviceId Device) {
+  SizeClass& SC = Classes[ClassId];
+  const uptr Stride = Granule / kMetadataSize;
+  if (!Stride)
+    return;
+
+  if (SC.NextChunk != 0 && SC.GranuleSet && SC.GranuleDevice != Device) {
+    uptr Boundary = RoundUpTo(SC.NextChunk, Stride);
+    // Boundary's granule is already homed on the other device.
+    if (SC.EntryBytes >= EntryBytesFor(Boundary + 1))
+      Boundary += Stride;
+    SC.NextChunk = Boundary;
+  }
+  SC.GranuleDevice = Device;
+  SC.GranuleSet = true;
+  if (SC.NextChunk <= SC.Chunks.size())
+    return;
+
+  // Not allocatable. Those entries belong to the previous device.
+  const uptr Mark = SC.Chunks.size();
+  SC.Chunks.resize(SC.NextChunk);
+  for (uptr I = Mark; I < SC.NextChunk; ++I) SC.Chunks[I].Live = true;
 }
 
 uptr Allocator::FindSlot(uptr ClassId, DeviceId Device) {
@@ -177,8 +211,8 @@ bool Allocator::EnsureEntries(DeviceId Device, uptr ClassId, uptr Chunks) {
     return false;
 
   SizeClass& SC = Classes[ClassId];
-  // Cover these chunks only. An extra granule would let GPU0's first map
-  // swallow GPU1's later indices, so their entries would sit in GPU0 HBM.
+  // Cover these chunks only. SeparateGranule keeps another device's indices
+  // out of a granule this one already maps.
   uptr Want = EntryBytesFor(Chunks);
   uptr Max = EntryBytesFor(ReachableChunks(ClassId));
   if (Want > Max)
@@ -259,6 +293,7 @@ bool Allocator::TakeChunk(DeviceId Device, uptr ClassId, uptr* ChunkIdx,
   SizeClass& SC = Classes[ClassId];
   uptr SlotIdx = FindSlot(ClassId, Device);
   if (SC.Slots[SlotIdx].Free.empty()) {
+    SeparateGranule(ClassId, Device);
     uptr Max = MaxUsableChunks(ClassId);
     uptr Reach = SC.NextChunk + RunChunks(ClassId);
     if (Reach > Max)
@@ -327,6 +362,7 @@ void Allocator::Shutdown() {
       SC.Slots.clear();
       SC.Chunks.clear();
       SC.NextChunk = SC.EntryBytes = 0;
+      SC.GranuleSet = false;
     }
     for (uptr I = 0; I < Handles.size(); ++I) VaDestroy(Handles[I]);
     Handles.clear();
@@ -354,13 +390,12 @@ uptr Allocator::Allocate(DeviceId Device, uptr Size, u32 AllocFlags, u32 Stack,
   if (Size == 0)
     return 0;
 
-  uptr First = ChooseClass(Size);
+  const uptr Keep = Size >= Granule ? Granule : kAllocAlignment;
+  uptr First = ChooseClass(Size, Keep);
   if (First >= kNumSizeClasses) {
     ++NumPassedTooBig;
     return 0;
   }
-
-  const uptr Keep = Size >= Granule ? Granule : kAllocAlignment;
 
   for (uptr ClassId = First; ClassId < kNumSizeClasses; ++ClassId) {
     uptr ChunkIdx;
@@ -419,7 +454,9 @@ uptr Allocator::Allocate(DeviceId Device, uptr Size, uptr ClassId) {
   for (uptr C = 0; C + Need <= SC.NextChunk; C += Stride) {
     bool Free = true;
     for (uptr I = 0; I < Need; ++I) {
-      if (SC.Chunks[C + I].Live) {
+      const ChunkState& S = SC.Chunks[C + I];
+      // A gap is live. Another device's free span stays on its granule.
+      if (S.Live || SC.Slots[S.Slot].Device != Device) {
         Free = false;
         break;
       }
@@ -431,6 +468,7 @@ uptr Allocator::Allocate(DeviceId Device, uptr Size, uptr ClassId) {
   }
 
   if (First == (uptr)-1) {
+    SeparateGranule(ClassId, Device);
     First = RoundUpTo(SC.NextChunk, Stride);
     const uptr End = First + Need;
     if (End > MaxUsableChunks(ClassId) ||
