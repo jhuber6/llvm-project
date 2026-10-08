@@ -20,7 +20,9 @@ namespace __dasan {
 
 using namespace __sanitizer;
 
-u32 HandleOffloadReport(void* Port, u32 Lanes);
+u32 HandleDeviceReport(void* Port, u32 Lanes);
+bool handleHostReport(uptr Addr, uptr AccessSize, uptr Base, uptr AllocSize,
+                      bool IsWrite, bool Recover, uptr Pc, uptr Bp);
 
 void ReportInvalidFree(uptr Addr, u32 Stack, u32 Tid);
 

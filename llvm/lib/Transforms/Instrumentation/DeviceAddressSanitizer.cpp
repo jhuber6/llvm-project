@@ -143,8 +143,9 @@ static cl::opt<bool> ClInstrumentAtomics("dasan-instrument-atomics", cl::Hidden,
 static cl::opt<bool> ClRecover("dasan-recover", cl::Hidden, cl::init(false));
 static cl::opt<bool> ClTrapOnError("dasan-trap-on-error", cl::Hidden,
                                    cl::init(false));
-static cl::opt<bool> ClInstrumentGlobals("dasan-instrument-globals", cl::Hidden,
-                                         cl::init(true));
+static cl::opt<cl::boolOrDefault>
+    ClInstrumentGlobals("dasan-instrument-globals", cl::Hidden,
+                        cl::desc("Wrap globals into the dasan window"));
 static cl::opt<bool> ClInstrumentShared("dasan-instrument-shared", cl::Hidden,
                                         cl::init(true));
 
@@ -186,7 +187,8 @@ public:
       : M(M), C(M.getContext()), DL(M.getDataLayout()),
         IntptrTy(DL.getIntPtrType(C)), Int32Ty(Type::getInt32Ty(C)),
         Recover(ClRecover.getNumOccurrences() ? ClRecover : Opts.Recover),
-        CheckShared(ClInstrumentShared) {}
+        CheckShared(ClInstrumentShared && M.getTargetTriple().isAMDGPU()),
+        GlobalsAS(DL.getDefaultGlobalsAddressSpace()) {}
 
   bool run();
 
@@ -198,6 +200,8 @@ private:
   void collect(Instruction &I, SmallVectorImpl<Access> &Accesses) const;
   bool instrumentPointer(Value *Ptr) const;
   bool shouldPlaceGlobal(const GlobalVariable &G) const;
+  bool isHeapAS(unsigned AS) const;
+  bool relocateGlobals() const;
 
   Bound heapBound(BuilderTy &IRB, Value *Base);
   Bound sharedBound(BuilderTy &IRB, Value *Ptr, Value *Limit);
@@ -226,6 +230,7 @@ private:
   Type *Int32Ty;
   bool Recover;
   bool CheckShared;
+  unsigned GlobalsAS;
   FunctionCallee Report[2];
   FunctionCallee ReportShared[2];
   Constant *NoEntry = nullptr;
@@ -243,8 +248,23 @@ static constexpr unsigned PrivateAS = AMDGPUAS::PRIVATE_ADDRESS;
 
 static bool isLocalAS(unsigned AS) { return AS == LocalAS; }
 static bool isPrivateAS(unsigned AS) { return AS == PrivateAS; }
-static bool isHeapAS(unsigned AS) {
-  return AS == FlatAS || AS == GlobalAS || AS == ConstantAS;
+
+bool DeviceAddressSanitizer::isHeapAS(unsigned AS) const {
+  if (M.getTargetTriple().isAMDGPU())
+    return AS == FlatAS || AS == GlobalAS || AS == ConstantAS;
+  return AS == 0 || AS == GlobalsAS;
+}
+
+bool DeviceAddressSanitizer::relocateGlobals() const {
+  switch (ClInstrumentGlobals) {
+  case cl::boolOrDefault::BOU_TRUE:
+    return true;
+  case cl::boolOrDefault::BOU_FALSE:
+    return false;
+  case cl::boolOrDefault::BOU_UNSET:
+    return M.getTargetTriple().isAMDGPU();
+  }
+  llvm_unreachable("invalid -dasan-instrument-globals");
 }
 
 // Special accesses that should not be instrumented like the dispatch packet.
@@ -266,11 +286,13 @@ static bool isSpecialMemory(const Value *Obj) {
 
 bool DeviceAddressSanitizer::instrumentPointer(Value *Ptr) const {
   unsigned AS = Ptr->getType()->getPointerAddressSpace();
-  if (!isHeapAS(AS) && !isLocalAS(AS) && !isPrivateAS(AS))
-    return false;
-  if (isLocalAS(AS))
-    return CheckShared;
-  if (isPrivateAS(AS))
+  if (M.getTargetTriple().isAMDGPU()) {
+    if (isLocalAS(AS))
+      return CheckShared;
+    if (isPrivateAS(AS))
+      return false;
+  }
+  if (!isHeapAS(AS))
     return false;
   const Value *Obj = getUnderlyingObject(Ptr);
   return !isa<AllocaInst>(Obj) && !isSpecialMemory(Obj);
@@ -387,7 +409,7 @@ Bound DeviceAddressSanitizer::heapBound(BuilderTy &IRB, Value *Base) {
               Valid,
               IRB.CreateSub(IRB.CreateOr(Addr, intptr(kRegionMask)), Slot),
               NoEntry),
-          IRB.getPtrTy(GlobalAS)),
+          IRB.getPtrTy(GlobalsAS)),
       Align(kMetadataSize));
 
   // The value can change underneath us in the case of a use-after-free. This
@@ -634,20 +656,20 @@ void DeviceAddressSanitizer::initializeCallbacks() {
         (Twine(kReportSharedStoreName) + Suffix).str(), Ty, AL);
   }
   auto *Word = IRB.getInt64Ty();
-  auto *GV = new GlobalVariable(M, Word, /*isConstant=*/true,
-                                GlobalValue::PrivateLinkage,
-                                ConstantInt::get(Word, 0), kNoEntryName,
-                                nullptr, GlobalValue::NotThreadLocal, GlobalAS);
+  auto *GV = new GlobalVariable(
+      M, Word, /*isConstant=*/true, GlobalValue::PrivateLinkage,
+      ConstantInt::get(Word, 0), kNoEntryName, nullptr,
+      GlobalValue::NotThreadLocal, GlobalsAS);
   GV->setAlignment(Align(kMetadataSize));
   NoEntry = ConstantExpr::getPtrToInt(GV, IntptrTy);
 }
 
 void DeviceAddressSanitizer::emitModuleMarker() {
   Type *Ty = Type::getInt8Ty(C);
-  auto *GV = new GlobalVariable(M, Ty, /*isConstant=*/true,
-                                GlobalValue::LinkOnceODRLinkage,
-                                ConstantInt::get(Ty, 1), kModuleMarkerName,
-                                nullptr, GlobalValue::NotThreadLocal, GlobalAS);
+  auto *GV = new GlobalVariable(
+      M, Ty, /*isConstant=*/true, GlobalValue::LinkOnceODRLinkage,
+      ConstantInt::get(Ty, 1), kModuleMarkerName, nullptr,
+      GlobalValue::NotThreadLocal, GlobalsAS);
   GV->setVisibility(GlobalValue::ProtectedVisibility);
   GV->setAlignment(Align(1ULL << kMinSizeLog));
   appendToUsed(M, {GV});
@@ -692,7 +714,7 @@ static uint64_t globalRedzoneSize(uint64_t Size, uint64_t ChunkSize) {
 }
 
 bool DeviceAddressSanitizer::placeGlobals() {
-  if (!ClInstrumentGlobals)
+  if (!relocateGlobals())
     return false;
 
   // Global placement works by loading the executable itself inside of the
@@ -785,8 +807,7 @@ PreservedAnalyses DeviceAddressSanitizerPass::run(Module &M,
                                                   ModuleAnalysisManager &MAM) {
   if (checkIfAlreadyInstrumented(M, "nosanitize_device_address"))
     return PreservedAnalyses::all();
-  const Triple &T = M.getTargetTriple();
-  if (!T.isAMDGPU() || M.getDataLayout().getPointerSizeInBits() != kWordBits)
+  if (M.getDataLayout().getPointerSizeInBits() != kWordBits)
     return PreservedAnalyses::all();
 
   if (!DeviceAddressSanitizer(M, Options).run())

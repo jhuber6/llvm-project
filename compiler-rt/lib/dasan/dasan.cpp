@@ -85,7 +85,7 @@ void Initialize() {
   SanitizerToolName = "DeviceAddressSanitizer";
   InitializeFlags();
 
-  Offload::Get().RegisterHandler(HandleOffloadReport);
+  Offload::Get().RegisterHandler(HandleDeviceReport);
   Atexit([] { Offload::Get().UntrackImages(); });
   AddDieCallback([] { Offload::Get().UntrackImages(); });
 

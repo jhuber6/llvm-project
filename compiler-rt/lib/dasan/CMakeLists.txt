@@ -39,6 +39,7 @@ endif()
 set(DASAN_SOURCES
   dasan.cpp
   dasan_allocator.cpp
+  dasan_host.cpp
   dasan_hsa_interceptors.cpp
   dasan_image.cpp
   dasan_platform.cpp

@@ -22,6 +22,7 @@
 #include "sanitizer_common/sanitizer_offload.h"
 #include "sanitizer_common/sanitizer_report_decorator.h"
 #include "sanitizer_common/sanitizer_stackdepot.h"
+#include "sanitizer_common/sanitizer_stacktrace.h"
 #include "sanitizer_common/sanitizer_stacktrace_printer.h"
 #include "sanitizer_common/sanitizer_symbolizer.h"
 #include "shared/rpc.h"
@@ -245,7 +246,80 @@ static bool PrintReport(const __dasan_offload_report& R) {
   return Halt;
 }
 
-u32 HandleOffloadReport(void* PortPtr, u32) {
+bool handleHostReport(uptr Addr, uptr AccessSize, uptr Base, uptr AllocSize,
+                      bool IsWrite, bool Recover, uptr Pc, uptr Bp) {
+  BufferedStackTrace Stack;
+  Stack.Unwind(Pc, Bp, nullptr, common_flags()->fast_unwind_on_fatal);
+  const uptr FaultPc =
+      Stack.size ? StackTrace::GetPreviousInstructionPc(Stack.trace[0]) : 0;
+
+  Lock L(&DasanMutex);
+
+  GlobalInfo G;
+  const bool IsGlobal = LookupGlobal(Base, &G);
+  AllocInfo A;
+  const bool Known = !IsGlobal && GetAllocator().Describe(Base, &A);
+  // A freed entry keeps its offset but reads as zero-sized.
+  const bool Freed = Known && AllocSize == 0;
+  uptr Beg = IsGlobal ? G.Beg : Known ? A.Beg : Base;
+  uptr Size = IsGlobal ? G.Size : Known ? A.Size : AllocSize;
+
+  const char* Bug;
+  if (Freed)
+    Bug = "heap-use-after-free";
+  else if (IsGlobal)
+    Bug = Addr < Beg ? "global-buffer-underflow" : "global-buffer-overflow";
+  else if (!Known && AllocSize == 0)
+    Bug = "unknown-device-address";
+  else if (Addr < Beg)
+    Bug = "heap-buffer-underflow";
+  else
+    Bug = "heap-buffer-overflow";
+
+  PrintHeader(Bug, Addr, FaultPc);
+
+  Decorator D;
+  Printf("%s%s of size %zu at %p%s\n", D.Access(), IsWrite ? "WRITE" : "READ",
+         AccessSize, (void*)Addr, D.Default());
+  Stack.Print();
+
+  if (IsGlobal)
+    PrintGlobalLocation(Addr, G);
+  else if (Size)
+    PrintLocation(Addr, Beg, Size);
+  if (!IsGlobal && Known) {
+    if (Freed)
+      PrintSite("freed by", A.FreeTid, A.FreeStack);
+    PrintSite(Freed ? "previously allocated by" : "allocated by", A.AllocTid,
+              A.AllocStack);
+  }
+
+  SymbolizedStack* Frames = nullptr;
+  if (Stack.size)
+    Frames = Symbolizer::GetOrInit()->SymbolizePC(FaultPc);
+  if (Frames) {
+    ReportErrorSummary(Bug, Frames->info);
+    Frames->ClearAll();
+  } else {
+    InternalScopedString S;
+    S.AppendF("%s (%p)", Bug, (void*)Addr);
+    ReportErrorSummary(S.data());
+  }
+
+  const int Want = flags()->halt_on_error;
+  const bool Halt = Want < 0 ? !Recover : Want != 0;
+
+  static bool Told = false;
+  if (Halt && !Recover && !Told) {
+    Told = true;
+    Report(
+        "HINT: build with -fsanitize-recover=daddress to report and keep "
+        "going\n");
+  }
+  return Halt;
+}
+
+u32 HandleDeviceReport(void* PortPtr, u32) {
   auto& Port = *reinterpret_cast<rpc::Server::Port*>(PortPtr);
   if (Port.get_opcode() != SANITIZER_OFFLOAD_DASAN)
     return rpc::RPC_UNHANDLED_OPCODE;
