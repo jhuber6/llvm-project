@@ -19,12 +19,16 @@ target triple = "x86_64-unknown-linux-gnu"
 ; GLOBALS: @g = {{.*}}alias i32, ptr @g.dasan
 
 define i32 @load4(ptr %a) sanitize_device_address {
+; Membership is the branch. The decode, including its load, is the cold side.
 ; CHECK-LABEL: define i32 @load4(
-; CHECK: lshr i64 {{.*}}, 45
-; CHECK: icmp eq i64 {{.*}}, 1
-; CHECK: inttoptr {{.*}} to ptr
+; CHECK: [[TOP:%.*]] = lshr i64 {{.*}}, 45
+; CHECK-NEXT: [[MINE:%.*]] = icmp eq i64 [[TOP]], 1
+; CHECK-NEXT: br i1 [[MINE]], label %[[SLOW:.*]], label %[[GO:.*]], !prof
+; CHECK: [[SLOW]]:
+; CHECK-NOT: select
 ; CHECK: load i64, ptr {{.*}}, align 8, !invariant.load
 ; CHECK: call void @__dasan_report_load(ptr %a, i64 4, i64 {{.*}}, i64 {{.*}})
+; CHECK: [[GO]]:
 ; CHECK: ret i32
   %v = load i32, ptr %a, align 4
   ret i32 %v

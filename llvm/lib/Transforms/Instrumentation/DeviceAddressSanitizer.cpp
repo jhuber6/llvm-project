@@ -20,8 +20,11 @@
 //   [ chunk 0 | chunk 1 | ... | unused | ... | md N-1 | ... | md 1 | md 0 ]
 //   |<------ 2^40 bytes ----------------------------------------------- >|
 //
-// Accesses of the same inbounds root in the same original block share one
-// bound.
+// Which form is emitted is a lowering choice. AMDGPU keeps one decode per
+// inbounds root in the block and selects the zero word for an outside
+// pointer, so the load can be hoisted and the wave does not branch.
+// Elsewhere an outside pointer is the common case, so membership is a branch
+// and the decode is its cold side.
 //
 //   %v = load i32, ptr addrspace(1) %p
 //
@@ -203,7 +206,7 @@ private:
   bool isHeapAS(unsigned AS) const;
   bool relocateGlobals() const;
 
-  Bound heapBound(BuilderTy &IRB, Value *Base);
+  Bound heapBound(BuilderTy &IRB, Value *Base, bool KnownMine = false);
   Bound sharedBound(BuilderTy &IRB, Value *Ptr, Value *Limit);
   void check(BuilderTy &IRB, const Access &A, const Bound &B, Instruction *At,
              bool Shared, BasicBlock *Trap);
@@ -390,11 +393,15 @@ static GlobalVariable *anySharedGV(const Value *P) {
              : nullptr;
 }
 
-Bound DeviceAddressSanitizer::heapBound(BuilderTy &IRB, Value *Base) {
+Bound DeviceAddressSanitizer::heapBound(BuilderTy &IRB, Value *Base,
+                                        bool KnownMine) {
   // Compute the address in the metadata region and return its pointer bounds.
+  // KnownMine means the caller already branched on membership, so the slot is
+  // the only legal address and a select back to the zero word is dead.
   Value *Addr = IRB.CreatePtrToInt(Base, IntptrTy);
-  Value *Valid =
-      IRB.CreateICmpEQ(IRB.CreateLShr(Addr, kSpaceSizeLog), intptr(1));
+  Value *Valid = nullptr;
+  if (!KnownMine)
+    Valid = IRB.CreateICmpEQ(IRB.CreateLShr(Addr, kSpaceSizeLog), intptr(1));
   Value *Class =
       IRB.CreateAnd(IRB.CreateLShr(Addr, kRegionSizeLog), intptr(kClassMask));
   Value *Shift = IRB.CreateAdd(Class, intptr(kMinSizeLog));
@@ -402,14 +409,11 @@ Bound DeviceAddressSanitizer::heapBound(BuilderTy &IRB, Value *Base) {
   Value *Idx = IRB.CreateLShr(InRegion, Shift);
   Value *Slot = IRB.CreateOr(IRB.CreateShl(Idx, kMetadataSizeLog),
                              intptr(kMetadataSize - 1));
+  Value *Meta = IRB.CreateSub(IRB.CreateOr(Addr, intptr(kRegionMask)), Slot);
+  if (!KnownMine)
+    Meta = IRB.CreateSelect(Valid, Meta, NoEntry);
   LoadInst *Entry = IRB.CreateAlignedLoad(
-      IntptrTy,
-      IRB.CreateIntToPtr(
-          IRB.CreateSelect(
-              Valid,
-              IRB.CreateSub(IRB.CreateOr(Addr, intptr(kRegionMask)), Slot),
-              NoEntry),
-          IRB.getPtrTy(GlobalsAS)),
+      IntptrTy, IRB.CreateIntToPtr(Meta, IRB.getPtrTy(GlobalsAS)),
       Align(kMetadataSize));
 
   // The value can change underneath us in the case of a use-after-free. This
@@ -591,13 +595,20 @@ bool DeviceAddressSanitizer::instrumentFunction(Function &F) {
   // For each access were generate a bound and an check on that bound. The
   // bounds are available anywhere inbounds from the access, so we only need one
   // load for each pointer base.
+  //
+  // Off the GPU the common pointer is outside the window. A select would still
+  // decode metadata for it, so membership is a branch and the decode is the
+  // cold side. One icmp per root; each access then jumps past its own check.
   DenseMap<Value *, Bound> HeapB;
+  DenseMap<Value *, Value *> MineB;
   DenseMap<Value *, Bound> SharedB;
   BasicBlock *Block = nullptr;
+  const bool BranchUnlessMine = !M.getTargetTriple().isAMDGPU();
   for (const Access &A : Accesses) {
     if (A.Block != Block) {
       Block = A.Block;
       HeapB.clear();
+      MineB.clear();
       SharedB.clear();
     }
     Instruction *At = A.I;
@@ -621,12 +632,29 @@ bool DeviceAddressSanitizer::instrumentFunction(Function &F) {
       check(IRB, A, It->second, At, true, Trap);
     } else if (isHeapAS(AS)) {
       Value *Root = A.Ptr->stripInBoundsOffsets();
-      auto [It, New] = HeapB.try_emplace(Root);
-      if (New) {
-        setPoint(IRB, At);
-        It->second = heapBound(IRB, Root);
+      if (BranchUnlessMine) {
+        auto [It, New] = MineB.try_emplace(Root);
+        if (New) {
+          setPoint(IRB, At);
+          Value *Addr = IRB.CreatePtrToInt(Root, IntptrTy);
+          It->second =
+              IRB.CreateICmpEQ(IRB.CreateLShr(Addr, kSpaceSizeLog), intptr(1));
+        }
+        Instruction *IP = SplitBlockAndInsertIfThen(
+            It->second, At, /*Unreachable=*/false,
+            MDBuilder(C).createUnlikelyBranchWeights());
+        IP->getParent()->setName("dasan.mine");
+        setPoint(IRB, IP);
+        check(IRB, A, heapBound(IRB, Root, /*KnownMine=*/true), IP, false,
+              Trap);
+      } else {
+        auto [It, New] = HeapB.try_emplace(Root);
+        if (New) {
+          setPoint(IRB, At);
+          It->second = heapBound(IRB, Root);
+        }
+        check(IRB, A, It->second, At, false, Trap);
       }
-      check(IRB, A, It->second, At, false, Trap);
     }
     ++(A.IsWrite ? NumInstrumentedWrites : NumInstrumentedReads);
   }
