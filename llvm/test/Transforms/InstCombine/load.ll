@@ -68,8 +68,7 @@ define i32 @test5_asan(i1 %C) sanitize_address {
 
 define i32 @test5_dasan(i1 %C) sanitize_device_address {
 ; CHECK-LABEL: @test5_dasan(
-; CHECK-NEXT:    [[Y:%.*]] = select i1 [[C:%.*]], ptr @X, ptr @X2
-; CHECK-NEXT:    [[Z:%.*]] = load i32, ptr [[Y]], align 4
+; CHECK-NEXT:    [[Z:%.*]] = select i1 [[C:%.*]], i32 42, i32 47
 ; CHECK-NEXT:    ret i32 [[Z]]
 ;
   %Y = select i1 %C, ptr @X, ptr @X2

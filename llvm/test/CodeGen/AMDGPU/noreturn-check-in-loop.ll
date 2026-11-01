@@ -53,7 +53,7 @@ define amdgpu_kernel void @divergent_checks(ptr addrspace(1) %out, ptr addrspace
 ; CHECK-NEXT:    global_load_dword v9, v[7:8], off
 ; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, s20, v3
 ; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, s21, v4, vcc_lo
-; CHECK-NEXT:    v_add_co_u32 v3, vcc_lo, 0x100, v3
+; CHECK-NEXT:    v_add_co_u32 v3, vcc_lo, v3, 0x100
 ; CHECK-NEXT:    v_add_co_ci_u32_e64 v4, null, 0, v4, vcc_lo
 ; CHECK-NEXT:    s_waitcnt vmcnt(0)
 ; CHECK-NEXT:    v_add_f32_e32 v10, v9, v9
@@ -198,7 +198,7 @@ define amdgpu_kernel void @uniform_checks(ptr addrspace(1) %out, ptr addrspace(1
 ; CHECK-NEXT:    global_load_dword v9, v[7:8], off
 ; CHECK-NEXT:    v_add_co_u32 v7, vcc_lo, s20, v3
 ; CHECK-NEXT:    v_add_co_ci_u32_e64 v8, null, s21, v4, vcc_lo
-; CHECK-NEXT:    v_add_co_u32 v3, vcc_lo, 0x100, v3
+; CHECK-NEXT:    v_add_co_u32 v3, vcc_lo, v3, 0x100
 ; CHECK-NEXT:    v_add_co_ci_u32_e64 v4, null, 0, v4, vcc_lo
 ; CHECK-NEXT:    s_waitcnt vmcnt(0)
 ; CHECK-NEXT:    v_add_f32_e32 v10, v9, v9
