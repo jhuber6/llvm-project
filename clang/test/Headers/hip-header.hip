@@ -50,6 +50,14 @@
 // RUN: %clang_cc1 -include __clang_hip_runtime_wrapper.h \
 // RUN:   -internal-isystem %S/../../lib/Headers/cuda_wrappers \
 // RUN:   -internal-isystem %S/Inputs/include \
+// RUN:   -triple amdgpu9.06-amd-amdhsa -aux-triple x86_64-unknown-unknown \
+// RUN: -emit-llvm %s -fcuda-is-device -o - \
+// RUN:   -DHIP_VERSION_MAJOR=4 -DHIP_VERSION_MINOR=5 \
+// RUN:   -fsanitize=daddress -disable-llvm-passes -D__HIPCC_RTC__ \
+// RUN:   | FileCheck -check-prefixes=MALLOC-DASAN %s
+// RUN: %clang_cc1 -include __clang_hip_runtime_wrapper.h \
+// RUN:   -internal-isystem %S/../../lib/Headers/cuda_wrappers \
+// RUN:   -internal-isystem %S/Inputs/include \
 // RUN:   -aux-triple amdgpu-amd-amdhsa -triple x86_64-unknown-unknown \
 // RUN:   -emit-llvm %s -o - \
 // RUN:   -DHIP_VERSION_MAJOR=4 -DHIP_VERSION_MINOR=5 \
@@ -169,6 +177,11 @@ __device__ double test_isnan() {
 // MALLOC-ASAN-LABEL: define weak {{.*}}ptr @malloc(i64
 // MALLOC-ASAN:  call ptr @llvm.returnaddress.p0(i32 0)
 // MALLOC-ASAN:  call i64 @__asan_malloc_impl(i64 {{.*}}, i64 {{.*}})
+// MALLOC-DASAN-LABEL: define{{.*}}@_Z11test_malloc
+// MALLOC-DASAN: call {{.*}}ptr @malloc(i64
+// MALLOC-DASAN: call {{.*}}ptr @malloc(i64
+// MALLOC-DASAN-NOT: __ockl_dm_alloc
+// MALLOC-DASAN-NOT: define{{.*}}@malloc(
 __device__ void test_malloc(void *a) {
   a = malloc(42);
   a = std::malloc(42);
@@ -183,6 +196,11 @@ __device__ void test_malloc(void *a) {
 // MALLOC-ASAN-LABEL: define weak {{.*}}void @free(ptr
 // MALLOC-ASAN:  call ptr @llvm.returnaddress.p0(i32 0)
 // MALLOC-ASAN:  call void @__asan_free_impl(i64 {{.*}}, i64 {{.*}})
+// MALLOC-DASAN-LABEL: define{{.*}}@_Z9test_free
+// MALLOC-DASAN: call {{.*}}void @free(ptr
+// MALLOC-DASAN: call {{.*}}void @free(ptr
+// MALLOC-DASAN-NOT: __ockl_dm_dealloc
+// MALLOC-DASAN-NOT: define{{.*}}@free(
 __device__ void test_free(void *a) {
   free(a);
   std::free(a);
